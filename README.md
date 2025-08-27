@@ -1,2 +1,7 @@
-# Meijing_Guo_Thesis_code
-Code for data processing and analysis included in the thesis
+# Thesis code
+
+
+This repository contains code to process and analyse NOME-seq based experiments.
+# "data processing workflow" holds workflow and parameter used for all sequencing libraries processing
+# 'data analysis' holds codes for data analysis and plotting for results shown in the thesis.
+

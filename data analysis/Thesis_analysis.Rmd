@@ -1,0 +1,4744 @@
+---
+title: "Thesis Analysis"
+output: html_notebook
+---
+This is a script with all the results and analysis shown in the thesis using R.
+
+# Results 0.5 QC mapping efficiency & methylation compile data for analysis 
+```{r}
+library(data.table)
+library(tidyverse)  
+library(dplyr)
+library(ggplot2)
+library(ggsignif)
+# Mapping efficiency extraction from report
+
+INPUT= "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/bismark/SE/nondirectional"
+OUTPUT_DIR = "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/analysis/thesis"
+
+#WGA
+wga_me <- read.table(paste0(INPUT, "/mapping_efficiency_summary.txt"), header = FALSE, sep = "\n", stringsAsFactors = FALSE)
+
+split_lines <- strsplit(as.character(wga_me$V1), ":", fixed = TRUE)  
+wga_me <- data.frame(
+  Sample = sapply(split_lines, function(x) x[1]),  # Sample name
+  Metric = sapply(split_lines, function(x) paste(x[-1], collapse = ":"))  # Everything after the first colon
+)
+
+metric_split <- do.call(rbind, strsplit(wga_me$Metric, "\t"))  
+wga_me$Metric_Type <- metric_split[, 1]
+wga_me$Value <- metric_split[, 2]
+wga_me$Metric <- NULL  
+
+wga_me <- pivot_wider(wga_me, names_from = Metric_Type, values_from = Value)
+
+wga_me$Sample<-gsub("_SE_report.txt","",wga_me$Sample)
+
+wga_me <- wga_me %>%
+  rename(
+    unique_align = `Number of alignments with a unique best hit from the different alignments:`,
+    mapping_efficiency = `Mapping efficiency:`
+  )
+
+#control
+INPUT= "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/OCUBF_R/bismark/SE/nondirectional"
+control_me <- read.table(paste0(INPUT, "/mapping_efficiency_summary.txt"), header = FALSE, sep = "\n", stringsAsFactors = FALSE)
+
+split_lines <- strsplit(as.character(control_me$V1), ":", fixed = TRUE)  
+control_me <- data.frame(
+  Sample = sapply(split_lines, function(x) x[1]),  # Sample name
+  Metric = sapply(split_lines, function(x) paste(x[-1], collapse = ":"))  # Everything after the first colon
+)
+
+metric_split <- do.call(rbind, strsplit(control_me$Metric, "\t"))  
+control_me$Metric_Type <- metric_split[, 1]
+control_me$Value <- metric_split[, 2]
+control_me$Metric <- NULL  
+
+control_me <- pivot_wider(control_me, names_from = Metric_Type, values_from = Value)
+control_me$Sample<-gsub("SLX-22584.H12.227KFHLT4.s_5","OCUBF_control",control_me$Sample)
+
+control_me$Sample<-gsub("_SE_report.txt","",control_me$Sample)
+
+control_me <- control_me %>%
+   rename(unique_align = `Number of alignments with a unique best hit from the different alignments:`, mapping_efficiency= `Mapping efficiency:`)
+#nWGA
+INPUT= "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/sin_WGA/bismark/SE/nondirectional"
+nwga_me <- read.table(paste0(INPUT, "/mapping_summary.txt"), header = FALSE, sep = "\n", stringsAsFactors = FALSE)
+
+split_lines <- strsplit(as.character(nwga_me$V1), ":", fixed = TRUE)  
+nwga_me <- data.frame(
+  Sample = sapply(split_lines, function(x) x[1]),  # Sample name
+  Metric = sapply(split_lines, function(x) paste(x[-1], collapse = ":"))  # Everything after the first colon
+)
+
+metric_split <- do.call(rbind, strsplit(nwga_me$Metric, "\t"))  
+nwga_me$Metric_Type <- metric_split[, 1]
+nwga_me$Value <- metric_split[, 2]
+nwga_me$Metric <- NULL  
+
+nwga_me <- pivot_wider(nwga_me, names_from = Metric_Type, values_from = Value)
+
+nwga_me$Sample<-gsub("_SE_report.txt","",nwga_me$Sample)
+
+nwga_me <- nwga_me %>%
+  rename(
+    unique_align = `Number of alignments with a unique best hit from the different alignments:`,
+    mapping_efficiency = `Mapping efficiency:`
+  )
+
+wga_me$type <- ifelse(
+  grepl("BS", wga_me$Sample), "WGA_BS", 
+  ifelse(grepl("EM", wga_me$Sample), "WGA_EM", NA)
+)
+nwga_me$type <- ifelse(
+  grepl("BS", nwga_me$Sample), "nWGA_BS", 
+  ifelse(grepl("EM", nwga_me$Sample), "nWGA_EM", NA)
+)
+
+control_me$type <- "OCUB_F control"
+
+# Combine all data frames 
+bulk<- rbind(wga_me,nwga_me,control_me)
+
+bulk$cell <- ifelse(
+  grepl("NA12878", bulk$Sample), "NA12878", "OCUB_F"
+)
+
+
+bulk$WGA_pol <- ifelse(grepl("EpiMark_", bulk$Sample), "EpiMark",
+                        ifelse(grepl("NEB5X1_", bulk$Sample), "NEB5X1",
+                        ifelse(grepl("NEB5X2_", bulk$Sample), "NEB5X2",
+                        ifelse(grepl("EQUT_", bulk$Sample), "EQUT", NA))))
+
+bulk$DNA_pol <- ifelse(grepl("Q5U", bulk$Sample), "Q5U",
+                        ifelse(grepl("Q5", bulk$Sample), "Q5",
+                        ifelse(grepl("EQUT", bulk$Sample), "EQUT", NA)))
+bulk$reads<-ifelse(grepl("1$",bulk$Sample),"r1","r2")
+
+write.csv(bulk, paste0(OUTPUT_DIR,"/mapping efficiency.csv"), row.names = FALSE) 
+
+#Ddeduplicated merged reads used for methylation
+#WGA
+INPUT= "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/bismark/SE/nondirectional/methyl_call/"
+OUTPUT_DIR = "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/analysis/thesis"
+
+wga_me <- read.table(paste0(INPUT, "/methylation_mapping_summary.txt"), header = FALSE, sep = "\n", stringsAsFactors = FALSE)
+
+wga_me<- wga_me %>%
+  mutate(
+    sample = str_extract(V1, "^[^:]+") %>% str_remove("_dedup\\.merged.*"),
+    reads = str_extract(V1, "\\d+$") %>% as.numeric()
+  ) %>%
+  select(-V1)
+
+INPUT= "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/OCUBF_R/bismark/SE/nondirectional/methyl_call"
+control_me <- read.table(paste0(INPUT, "/methylation_mapping_summary.txt"), header = FALSE, sep = "\n", stringsAsFactors = FALSE)
+control_me<- control_me %>%
+  mutate(
+    sample = "OCUB-F reference",
+    reads = str_extract(V1, "\\d+$") %>% as.numeric()
+  ) %>%
+  select(-V1)
+
+INPUT= "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/sin_WGA/bismark/SE/nondirectional/methyl_call"
+nwga_me <- read.table(paste0(INPUT, "/methylation_mapping_summary.txt"), header = FALSE, sep = "\n", stringsAsFactors = FALSE)
+nwga_me<- nwga_me %>%
+  mutate(
+    sample = str_extract(V1, "^[^:]+") %>% str_remove("_dedup\\.merged.*"),
+    reads = str_extract(V1, "\\d+$") %>% as.numeric()
+  ) %>%
+  select(-V1)
+
+bulk<- rbind(wga_me,nwga_me,control_me)
+write.csv(bulk, paste0(OUTPUT_DIR,"/methylation used reads.csv"), row.names = FALSE) 
+
+# global methylation
+#function handles
+analyse_sample <- function(file_path) {
+  dt <- fread(file_path, header = FALSE,
+              col.names = c("chrom", "start", "end", "meth_pct", "meth_count", "unmeth_count"))
+  
+  sample <- sub("_dedup\\.merged\\.NOMe\\.CpG\\.cov$", "", basename(file_path))
+  
+  calc_methylation <- function(sub_dt) {
+    meth <- sum(sub_dt$meth_count)
+    unmeth <- sum(sub_dt$unmeth_count)
+    if ((meth + unmeth) == 0) return(0)
+    return(100 * meth / (meth + unmeth))
+  }
+  
+  methylation_phage <- calc_methylation(dt[chrom == "phage_lambda"])
+  methylation_puc19 <- calc_methylation(dt[chrom == "plasmid_puc19c"])
+  methylation_global <- calc_methylation(dt[chrom %in% c(paste0("chr", 1:22), "chrX", "chrY")])
+  
+  return(data.table(
+    sample = sample,
+    global_methylation_phage = methylation_phage,
+    global_methylation_puc19 = methylation_puc19,
+    global_methylation = methylation_global
+  ))
+}
+
+
+#nwga
+INPUT_DIR = "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/sin_WGA/bismark/SE/nondirectional/CPG_GPC"
+OUTPUT_DIR = "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/analysis/thesis"
+
+SAMPLES_em = list.files(INPUT_DIR, "*EM_.*_dedup\\.merged\\.NOMe\\.CpG\\.cov$",full.names = TRUE)
+SAMPLES_bs = list.files(INPUT_DIR, "*BS_.*_dedup\\.merged\\.NOMe\\.CpG\\.cov$", full.names = TRUE)
+
+results_em <- rbindlist(lapply(SAMPLES_em, analyse_sample))
+results_bs <- rbindlist(lapply(SAMPLES_bs, analyse_sample))
+
+fwrite(results_em, file.path(OUTPUT_DIR, "global_methylation_em_nwga.csv"))
+fwrite(results_bs, file.path(OUTPUT_DIR, "global_methylation_bs_nwga.csv"))
+
+#wga
+INPUT_DIR = "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/bismark/SE/nondirectional/CPG_GPC"
+
+SAMPLES_em = list.files(INPUT_DIR, "*EM_.*_dedup\\.merged\\.NOMe\\.CpG\\.cov$",full.names = TRUE)
+SAMPLES_bs = list.files(INPUT_DIR, "*BS_.*_dedup\\.merged\\.NOMe\\.CpG\\.cov$", full.names = TRUE)
+
+results_em <- rbindlist(lapply(SAMPLES_em, analyse_sample))
+results_bs <- rbindlist(lapply(SAMPLES_bs, analyse_sample))
+
+fwrite(results_em, file.path(OUTPUT_DIR, "global_methylation_em_wga.csv"))
+fwrite(results_bs, file.path(OUTPUT_DIR, "global_methylation_bs_wga.csv"))
+
+#Gold sample
+INPUT_DIR = "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/OCUBF_R/bismark/SE/nondirectional/CPG_GPC"
+
+sample = list.files(INPUT_DIR, "*\\.merged\\.NOMe\\.CpG\\.cov$",full.names = TRUE)
+
+results <- rbindlist(lapply(sample, analyse_sample))
+results$sample<- "gold_NOMEseq"
+fwrite(results, file.path(OUTPUT_DIR, "global_methylation_gold.csv"))
+
+
+# raw reads
+INPUT= "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/demul"
+wga<- read.table(paste0(INPUT, "/demul_reads.tsv"), header = FALSE, sep = "", stringsAsFactors = FALSE, col.names= c("sample","paired_reads"))
+wga$sample<-sub(".r_.*$","",wga$sample)
+wga<-unique(wga)
+wga$sample<-substr(wga$sample, 1, nchar(wga$sample) - 2)
+wga$sample<-gsub("_","-",wga$sample)
+wga$sample<-gsub("-Pool","",wga$sample)
+
+INPUT= "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/OCUBF_R/demul"
+ref<- read.table(paste0(INPUT, "/demul_reads.tsv"), header = FALSE, sep = "", stringsAsFactors = FALSE, col.names= c("sample","paired_reads"))
+ref$sample<-"OCUB-F reference"
+ref<-unique(ref)
+
+INPUT= "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/sin_WGA/demul"
+nwga<- read.table(paste0(INPUT, "/demul_reads.tsv"), header = FALSE, sep = "", stringsAsFactors = FALSE, col.names= c("sample","paired_reads"))
+nwga$sample<-sub(".r_.*$","",nwga$sample)
+nwga<-unique(nwga)
+nwga$sample<-gsub("_","-",nwga$sample)
+
+raw<-rbind(ref,nwga,wga)
+OUTPUT_DIR = "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/analysis/thesis"
+write.table(raw,paste0(OUTDIR,"/sequencing_depth.tsv"),row.names = FALSE)
+```
+# Supplementary statistical test
+```{r}
+#cleaned sequencing depth table generated from previous step
+OUTPUT_DIR = "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/analysis/thesis"
+depth<- read.table(paste0(OUTPUT_DIR, "/sequencing_depth.csv"), header = TRUE, sep = ",", stringsAsFactors = FALSE)
+NEB5X<-depth[grepl("NEB5X",depth$Sample),]
+NEB5X$cell<-ifelse(grepl("NA12878",NEB5X$Sample), "NA12878","OCUB-F")
+NEB5X$lib<-ifelse(grepl("NEB5X1",NEB5X$Sample), "NEB5X1","NEB5X2")
+
+pvals <- NEB5X %>%
+  group_by(group,cell) %>%
+  summarise(
+    p.value = wilcox.test(Paired.reads.counts ~ lib, data = cur_data())$p.value,
+    .groups = "drop"
+  )
+padj<-p.adjust(pvals$p.value,method="BH")
+pvals<-cbind(pvals,padj)
+NEB5X_with_p <- NEB5X %>%
+  left_join(pvals, by = c("group","cell"))
+
+write.table(NEB5X_with_p,paste0(OUTDIR,"/NEB5X_compare.tsv"),row.names = FALSE)
+
+```
+
+# Results 1.1 QC mapping efficiency by protocol type
+```{r}
+library(data.table)
+library(tidyverse)  
+library(dplyr)
+library(ggplot2)
+library(ggsignif)
+library(rstatix)
+library(viridis)
+
+INPUT="/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/analysis/thesis"
+OUTDIR= "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/analysis/thesis"
+bulk <- read.csv(paste0(INPUT, "/mapping efficiency.csv"), header = TRUE)
+# Create the new column 'cond'
+bulk$cond <- apply(bulk, 1, function(row) {
+  # Extracting values
+  type_val <- row['type']
+  WGA_pol_val <- row['WGA_pol']
+  DNA_pol_val <- row['DNA_pol']
+  
+  # Create a vector of non-NA values
+  values <- c(type_val,WGA_pol_val, DNA_pol_val)
+  non_na_values <- values[!is.na(values)]
+  
+  # Paste non-NA values together with "-"
+  paste(non_na_values, collapse = "-")
+})
+bulk$cond<- gsub("_","-",bulk$cond)
+bulk$type<- gsub("_","-",bulk$type)
+
+
+bulk$Sample <- substr(bulk$Sample, 1, nchar(bulk$Sample) - 1)
+
+bulk$mapping_efficiency <- as.numeric(gsub("%", "", bulk$mapping_efficiency))
+
+
+bulk$type<-gsub("OCUB-F control","OCUB-F reference",bulk$type)
+bulk$type <- as.character(bulk$type)
+```
+
+# 1.1 nWGA
+
+```{r}
+nWGA <- bulk[grep("nWGA",bulk$type),]
+nWGA$type<-gsub("nWGA-","",nWGA$type)
+
+nWGAEM_vs_nWGABS  = wilcox.test(mapping_efficiency ~ type, data = nWGA)
+
+nWGA$type <- factor(nWGA$type, levels = c("EM","BS"))
+pvals <- nWGAEM_vs_nWGABS$p.value
+
+comparisons<-list(c("EM", "BS"))
+
+#Unique align
+nWGA$unique_align<-log10(nWGA$unique_align)
+nWGAEM_vs_nWGABS_ua  = wilcox.test(unique_align ~ type, data = nWGA)
+
+nWGA$type <- factor(nWGA$type, levels = c("EM","BS"))
+pvals_ua <- nWGAEM_vs_nWGABS_ua$p.value
+
+pvals_join<-c(pvals,pvals_ua)
+
+
+p.adjust(pvals_join, method = "BH")
+p_labels <- setNames(paste0("p.adjust = ", signif(pvals_join, 2)),c("nWGAEM_vs_nWGABS","nWGAEM_vs_nWGABS_ua"))
+
+
+comparisons<-list(c("EM", "BS"))
+
+y_positions <- 80
+p_all <- ggplot(nWGA, aes(x = type, y = mapping_efficiency, fill = type)) +
+  geom_boxplot(outlier.shape = NA, position = position_dodge(width = 0.75), width = 0.3, alpha = 0.8) +  
+  geom_jitter(
+    color = "red",
+    position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.75),  
+    size = 2, alpha = 0.9
+  ) +
+  scale_fill_manual(values = c("EM"= "#3B0F70FF", "BS"= "#F1605DFF"))+
+  scale_y_continuous(limits = c(30, 85), breaks = seq(30, 80, by = 10)) +  
+  labs(
+    title = "EM vs BS mapping efficiency",
+    x = "Condition",
+    y = "Mapping efficiency (%)",
+    fill = "Condition"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    axis.text.x = element_text(hjust = 0.5, size = 14, color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    axis.title.x = element_text(size = 16, color = "black"),
+    axis.title.y = element_text(size = 16, color = "black"),
+    legend.text = element_text(size = 14, color = "black"), 
+    legend.title = element_text(size = 14, color = "black"),
+    axis.line = element_line(color = "black", linewidth = 0.8),
+    plot.title = element_text(size = 16, color= "black", hjust = 0.5)
+  )+
+  geom_signif(
+    comparisons = comparisons,
+    annotations = p_labels[1],
+    y_position = y_positions,
+    tip_length = 0.03,
+    map_signif_level = FALSE,
+    lineheight = 0.9,
+    textsize = 5,
+    vjust= -0.2
+  )
+ggsave(paste0(OUTDIR, "/mapping_efficiency_by_library_nWGA_new_paj.png"), p_all, width = 4, height = 3)
+print(p_all)
+
+```
+
+#nwga unique alignments plot
+```{r}
+#Unique align
+nWGA <- bulk[grep("nWGA",bulk$type),]
+nWGA$type<-gsub("nWGA-","",nWGA$type)
+
+nWGA$unique_align<-log10(nWGA$unique_align)
+nWGAEM_vs_nWGABS_ua  = wilcox.test(unique_align ~ type, data = nWGA)
+
+#from mapping effiency
+nWGAEM_vs_nWGABS  = wilcox.test(mapping_efficiency ~ type, data = nWGA)
+
+nWGA$type <- factor(nWGA$type, levels = c("EM","BS"))
+pvals <- nWGAEM_vs_nWGABS$p.value
+
+
+nWGA$type <- factor(nWGA$type, levels = c("EM","BS"))
+pvals_ua <- nWGAEM_vs_nWGABS_ua$p.value
+
+pvals_join<-c(pvals,pvals_ua)
+p.adjust(pvals_join, method = "BH")
+p_labels <- setNames(paste0("p.adjust = ", signif(pvals_join, 2)),c("nWGAEM_vs_nWGABS","nWGAEM_vs_nWGABS_ua"))
+
+
+comparisons<-list(c("EM", "BS"))
+
+y_positions <- 7
+p_all <- ggplot(nWGA, aes(x = type, y = unique_align, fill = type)) +
+  geom_boxplot(outlier.shape = NA, position = position_dodge(width = 0.75), width = 0.3, alpha = 0.8) +  
+  geom_jitter(
+    color = "red",
+    position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.75),  
+    size = 2, alpha = 0.9
+  ) +
+  geom_hline(yintercept = log10(3000000), linetype = "dashed", color = "black", linewidth = 0.8) +
+  annotate("text", x = 1.5, y= log10(3000000), label = "3 million reads", color = "black", size = 5, vjust = -0.5)+
+  scale_fill_manual(values = c("EM"= "#3B0F70FF", "BS"="#F1605DFF"))+
+  scale_y_continuous(limits = c(6,7.5), breaks = seq(6, 7.5, by = 0.5)) +  
+  labs(
+    title = "EM vs BS unique alignment",
+    x = "Condition",
+    y = "Log10 aligned reads",
+    fill = "Condition"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    axis.text.x = element_text(hjust = 0.5, size = 14, color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    axis.title.x = element_text(size = 16, color = "black"),
+    axis.title.y = element_text(size = 16, color = "black"),
+    legend.text = element_text(size = 14, color = "black"), 
+    legend.title = element_text(size = 14, color = "black"),
+    axis.line = element_line(color = "black", linewidth = 0.8),
+    plot.title = element_text(size = 16, color= "black", hjust = 0.5)
+  )+
+  geom_signif(
+    comparisons = comparisons,
+    annotations = p_labels[2],
+    y_position = y_positions,
+    tip_length = 0.03,
+    map_signif_level = FALSE,
+    lineheight = 0.9,
+    textsize = 5,
+    vjust= -0.2
+  )
+ggsave(paste0(OUTDIR, "/unique_alignment_by_library_nWGA_padj.png"), p_all, width = 4, height = 3)
+print(p_all)
+```
+
+
+# nwga vs wga
+```{r}
+# faceted version
+BS <- bulk[grep("BS", bulk$type), ]
+BS$type <- gsub("-BS", "", BS$type)
+BS$library_type <- "BS"
+
+EM <- bulk[grep("EM", bulk$type), ]
+EM$type <- gsub("-EM", "", EM$type)
+EM$library_type <- "EM"
+
+combined <- rbind(BS, EM)
+
+combined$type <- factor(combined$type, levels = c("nWGA", "WGA"))
+combined$library_type <- factor(combined$library_type, levels = c("EM", "BS"))
+
+pvals_df <- combined %>%
+  group_by(library_type) %>%
+  summarise(
+    p_value = wilcox.test(mapping_efficiency ~ type)$p.value,
+    .groups = "drop"
+  ) %>%
+  mutate(
+    padj = p.adjust(p_value, method = "BH"),
+    p_label = paste0("p.adjust = ", signif(padj, 2)),
+    group1 = "nWGA",
+    group2 = "WGA",
+    y_position = 82
+  )
+
+
+p_all <- ggplot(combined, aes(x = type, y = mapping_efficiency, fill = type)) +
+  geom_boxplot(
+    outlier.shape = NA, 
+    position = position_dodge(width = 0.75), 
+    width = 0.3, alpha = 0.8
+  ) +
+  geom_jitter(
+    color = "red",
+    position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.75),  
+    size = 1.5, alpha = 0.9
+  ) +
+  geom_signif(
+    inherit.aes = FALSE,
+    data = pvals_df,
+    aes(
+    xmin = group1, 
+    xmax = group2, 
+    annotations = p_label, 
+    y_position = y_position,
+    group = library_type),
+    tip_length = 0.03,
+    map_signif_level = FALSE,
+    lineheight = 0.9,
+    textsize = 5,
+    vjust = -0.2,
+    manual = TRUE
+)+
+  scale_fill_manual(values = c("nWGA"= "#9A2D7FFF", "WGA"= "#FECE91FF")) +
+  scale_y_continuous(limits = c(29, 85), breaks = seq(30, 90, by = 10)) +
+  facet_wrap(~library_type) +
+  labs(
+    x = "Condition",
+    y = "Mapping efficiency (%)",
+    title = "nWGA vs WGA mapping efficiency"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    strip.text = element_text(size = 14, color = "black"),
+    axis.text.x = element_text(hjust = 0.5, size = 14, color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    axis.title.x = element_text(size = 16, color = "black"),
+    axis.title.y = element_text(size = 16, color = "black"),
+    legend.text = element_text(size = 14, color = "black"), 
+    legend.title = element_text(size = 14, color = "black"),
+    axis.line = element_line(color = "black", linewidth = 0.8),
+    plot.title = element_text(size = 16, color= "black", hjust = 0.5)
+  )
+
+
+ggsave(paste0(OUTDIR, "/mapping_efficiency_by_library_combined_facet_padj.png"), p_all, width = 8, height = 3.5)
+print(p_all)
+```
+
+
+#nwga-wga unique alignments
+```{r}
+BS<-bulk[grep("BS",bulk$type),]
+BS$type<-gsub("-BS","",BS$type)
+BS$unique_align <- log10(BS$unique_align)
+nWGABS_vs_WGABS  = wilcox.test(unique_align ~ type, data = BS)
+
+BS$type <- factor(BS$type, levels = c("nWGA","WGA"))
+pvals <- nWGABS_vs_WGABS$p.value
+EM<-bulk[grep("EM",bulk$type),]
+EM$type<-gsub("-EM","",EM$type)
+EM$unique_align <- log10(EM$unique_align)
+nWGAEM_vs_WGAEM  = wilcox.test(unique_align ~ type, data = EM)
+
+EM$type <- factor(EM$type, levels = c("nWGA","WGA"))
+pvals_em <- nWGAEM_vs_WGAEM$p.value
+
+pvals_join<-c(pvals,pvals_em)
+p.adjust(pvals_join, method = "BH")
+p_labels <- setNames(paste0("p.adjust = ", signif(pvals_join, 2)),c("nWGABS_vs_WGABS","nWGAEM_vs_nWGAEM"))
+
+
+comparisons<-list(c("nWGA", "WGA"))
+
+y_positions <- 7
+p_all <- ggplot(BS, aes(x = type, y = unique_align, fill = type)) +
+  geom_boxplot(outlier.shape = NA, position = position_dodge(width = 0.75), width = 0.3, alpha = 0.8) +  
+  geom_jitter(
+    color = "red",
+    position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.75),  
+    size = 1.5, alpha = 0.9
+  ) +
+  geom_hline(yintercept = log10(1000000), linetype = "dashed", color = "black", linewidth = 0.8) +
+  annotate("text", x = 0.9, y= log10(1000000), label = "1 million reads", color = "black", size = 5, vjust = -0.5)+
+  scale_fill_manual(values = c("nWGA"= "#9A2D7FFF", "WGA"= "#FECE91FF"))+
+  scale_y_continuous(limits = c(5,7.5), breaks = seq(5, 7.5, by = 0.5)) +  
+  labs(
+    title = "BS unique alignment",
+    x = "Condition",
+    y = "Log10 aligned reads",
+    fill = "Condition"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    axis.text.x = element_text(hjust = 0.5, size = 14, color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    axis.title.x = element_text(size = 16, color = "black"),
+    axis.title.y = element_text(size = 16, color = "black"),
+    legend.text = element_text(size = 14, color = "black"), 
+    legend.title = element_text(size = 14, color = "black"),
+    axis.line = element_line(color = "black", linewidth = 0.8),
+    plot.title = element_text(size = 16, color= "black", hjust = 0.5)
+  )+
+  geom_signif(
+    comparisons = comparisons,
+    annotations = p_labels[1],
+    y_position = y_positions,
+    tip_length = 0.03,
+    map_signif_level = FALSE,
+    lineheight = 0.9,
+    textsize = 5,
+    vjust= -0.2
+  )
+
+ggsave(paste0(OUTDIR, "/unique_alignment_by_library_BSs_new.png"), p_all, width = 4, height = 3.5)
+print(p_all)
+
+
+#EM
+EM<-bulk[grep("EM",bulk$type),]
+EM$type<-gsub("-EM","",EM$type)
+EM$unique_align <- log10(EM$unique_align)
+nWGAEM_vs_WGAEM  = wilcox.test(unique_align ~ type, data = EM)
+
+comparisons<-list(c("nWGA", "WGA"))
+
+y_positions <- 7
+p_all <- ggplot(EM, aes(x = type, y = unique_align, fill = type)) +
+  geom_boxplot(outlier.shape = NA, position = position_dodge(width = 0.75), width = 0.3, alpha = 0.8) +  
+  geom_jitter(
+    color = "red",
+    position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.75),  
+    size = 1.5, alpha = 0.9
+  ) +
+  geom_hline(yintercept = log10(1000000), linetype = "dashed", color = "black", linewidth = 0.8) +
+  annotate("text", x = 0.9, y= log10(1000000), label = "1 million reads", color = "black", size = 5, vjust = -0.5)+
+  scale_fill_manual(values = c("nWGA"= "#9A2D7FFF", "WGA"= "#FECE91FF"))+
+  scale_y_continuous(limits = c(5,7.5), breaks = seq(5, 7.5, by = 0.5)) +  
+  labs(
+    title = "EM unique alignment",
+    x = "Condition",
+    y = "Log10 aligned reads",
+    fill = "Condition"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    axis.text.x = element_text(hjust = 0.5, size = 14, color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    axis.title.x = element_text(size = 16, color = "black"),
+    axis.title.y = element_text(size = 16, color = "black"),
+    legend.text = element_text(size = 14, color = "black"), 
+    legend.title = element_text(size = 14, color = "black"),
+    axis.line = element_line(color = "black", linewidth = 0.8),
+    plot.title = element_text(size = 16, color= "black", hjust = 0.5)
+  )+
+  geom_signif(
+    comparisons = comparisons,
+    annotations = p_labels[2],
+    y_position = y_positions,
+    tip_length = 0.03,
+    map_signif_level = FALSE,
+    lineheight = 0.9,
+    textsize = 5,
+    vjust= -0.2
+  )
+ggsave(paste0(OUTDIR, "/unique_alignment_by_library_EMs_new.png"), p_all, width = 4, height = 3.5)
+print(p_all)
+```
+
+# Results 1.1 WGAs
+```{r}
+WGA<-bulk[grep("^WGA",bulk$type),]
+WGA$type<-gsub("WGA-","",WGA$type)
+WGAEM_vs_WGABS  = wilcox.test(mapping_efficiency ~ type, data = WGA)
+
+WGA$type <- factor(WGA$type, levels = c("EM","BS"))
+pvals <- WGAEM_vs_WGABS$p.value
+
+WGA$unique_align<-log10(WGA$unique_align)
+WGAEM_vs_WGABS_ua  = wilcox.test(unique_align ~ type, data = WGA)
+
+pvals_ua <- WGAEM_vs_WGABS_ua$p.value
+p_bind<-c(pvals,pvals_ua)
+padj<-p.adjust(p_bind, method = "BH")
+p_labels <- setNames(paste0("p.adjust = ", signif(padj, 2)),c("WGAEM_vs_WGABS","WGAEM_vs_WGABS_ua"))
+comparisons<-list(c("EM", "BS"))
+
+y_positions <- 80
+p_all <- ggplot(WGA, aes(x = type, y = mapping_efficiency, fill = type)) +
+  geom_boxplot(outlier.shape = NA, position = position_dodge(width = 0.75), width = 0.3, alpha= 0.8) +  
+  geom_jitter(
+    color = "red",
+    position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.75),  
+    size = 1.5, alpha = 0.9
+  ) +
+  scale_fill_manual(values = c("EM"= "#3B0F70FF", "BS"="#F1605DFF"))+
+  scale_y_continuous(limits = c(29, 85), breaks = seq(30, 80, by = 10)) +  
+  labs(
+    title = "WGA methods' mapping efficiency",
+    x = "Condition",
+    y = "Mapping efficiency (%)"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    axis.text.x = element_text(hjust = 0.5, size = 14, color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    axis.title.x = element_text(size = 16, color = "black"),
+    axis.title.y = element_text(size = 16, color = "black"),
+    legend.text = element_text(size = 14, color = "black"), 
+    legend.title = element_text(size = 14, color = "black"),
+    axis.line = element_line(color = "black", linewidth = 0.8),
+    plot.title = element_text(size = 16, color= "black", hjust = 0.5)
+  )+
+  geom_signif(
+    comparisons = comparisons,
+    annotations = p_labels[1],
+    y_position = y_positions,
+    tip_length = 0.03,
+    map_signif_level = FALSE,
+    lineheight = 0.9,
+    textsize = 5,
+    vjust= -0.2
+  )
+ggsave(paste0(OUTDIR, "/mapping_efficiency_by_library_WGAs_padj.png"), p_all, width = 4, height = 3.5)
+print(p_all)
+```
+# WGA unique alignments
+```{r}
+WGA<-bulk[grep("^WGA",bulk$type),]
+WGA$type<-gsub("WGA-","",WGA$type)
+WGAEM_vs_WGABS  = wilcox.test(mapping_efficiency ~ type, data = WGA)
+
+WGA$type <- factor(WGA$type, levels = c("EM","BS"))
+pvals <- WGAEM_vs_WGABS$p.value
+
+WGA$unique_align<-log10(WGA$unique_align)
+WGAEM_vs_WGABS_ua  = wilcox.test(unique_align ~ type, data = WGA)
+
+pvals_ua <- WGAEM_vs_WGABS_ua$p.value
+p_bind<-c(pvals,pvals_ua)
+padj<-p.adjust(p_bind, method = "BH")
+p_labels <- setNames(paste0("p.adjust = ", signif(padj, 2)),c("WGAEM_vs_WGABS","WGAEM_vs_WGABS_ua"))
+comparisons<-list(c("EM", "BS"))
+
+y_positions <- 7
+p_all <- ggplot(WGA, aes(x = type, y = unique_align, fill = type)) +
+  geom_boxplot(outlier.shape = NA, position = position_dodge(width = 0.75), width = 0.3, alpha = 0.8) +  
+  geom_jitter(
+    color = "red",
+    position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.75),  
+    size = 1.5, alpha = 0.9
+  ) +
+  geom_hline(yintercept = log10(1000000), linetype = "dashed", color = "black", linewidth = 0.8) +
+  annotate("text", x = 1, y= log10(1000000), label = "1 million reads", color = "black", size = 5, vjust = 1.2)+
+  scale_fill_manual(values = c("EM"= "#3B0F70FF", "BS"="#F1605DFF"))+
+  scale_y_continuous(limits = c(5,7.5), breaks = seq(5, 7.5, by = 0.5)) +  
+  labs(
+    title = "WGA methods' unique alignment",
+    x = "Condition",
+    y = "Log10 aligned reads",
+    fill = "Condition"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    axis.text.x = element_text(hjust = 0.5, size = 14, color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    axis.title.x = element_text(size = 16, color = "black"),
+    axis.title.y = element_text(size = 16, color = "black"),
+    legend.text = element_text(size = 14, color = "black"), 
+    legend.title = element_text(size = 14, color = "black"),
+    axis.line = element_line(color = "black", linewidth = 0.8),
+    plot.title = element_text(size = 16, color= "black", hjust = 0.5)
+  )+
+  geom_signif(
+    comparisons = comparisons,
+    annotations = p_labels[2],
+    y_position = y_positions,
+    tip_length = 0.03,
+    map_signif_level = FALSE,
+    lineheight = 0.9,
+    textsize = 5,
+    vjust= -0.2
+  )
+ggsave(paste0(OUTDIR, "/unique_alignment_by_library_WGA_padj.png"), p_all, width = 4, height = 3.5)
+print(p_all)
+```
+
+#Result 1.2 WGA polymerases for WGA-bs
+```{r}
+#WGA
+WGA<-bulk[grep("^WGA-BS",bulk$type),]
+WGA$cond<-gsub("WGA-BS-","",WGA$cond)
+order<- c("EQUT","EpiMark","NEB5X1","NEB5X2" )
+type<- c("EpiMark","EQUT","NEB5X1","NEB5X2" )
+ordered_cond <- unlist(lapply(order, function(pol) {
+  sort(unique(WGA$cond[grepl(paste0("^", pol, "-"), WGA$cond)]))
+}))
+WGA$cond <- factor(WGA$cond, levels = ordered_cond)
+magma<-setNames(magma(n = 4, begin = 0.2, end = 0.9), type)
+
+p_all <- ggplot(WGA, aes(x = cond, y = mapping_efficiency, fill = WGA_pol)) +
+  geom_boxplot(outlier.shape = NA, position = position_dodge(width = 0.75), width = 0.3, alpha= 0.8) +  
+  geom_jitter(
+    color = "red",
+    position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.75),  
+    size = 1.5, alpha = 0.9
+  ) +
+  scale_fill_manual(values = magma)+
+  scale_y_continuous(limits = c(29, 85), breaks = seq(30, 80, by = 10)) +  
+  labs(
+    title = "Mapping efficiency by conditions",
+    x = paste0("Condition","\n","{WGA polyemerase} - {library polymerase}"),
+    y = "Mapping efficiency (%)") +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    axis.text.x = element_text(hjust = 0.5, size = 14, color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    axis.title.x = element_text(size = 16, color = "black"),
+    axis.title.y = element_text(size = 16, color = "black"),
+    legend.text = element_text(size = 14, color = "black"), 
+    legend.title = element_text(size = 14, color = "black"),
+    axis.line = element_line(color = "black", linewidth = 0.8),
+    plot.title = element_text(size = 16, color= "black", hjust = 0.5)
+  )+
+  coord_flip()
+ggsave(paste0(OUTDIR, "/mapping_efficiency_by_type_WGA_polymerases_wgabs_padj.png"), p_all, width = 6, height = 5)
+print(p_all)
+```
+# wga-bs unique align box
+```{r}
+WGA<-bulk[grep("^WGA-BS",bulk$type),]
+WGA$cond<-gsub("WGA-BS-","",WGA$cond)
+WGA$unique_align<-log10(WGA$unique_align)
+type<- c("EpiMark","EQUT","NEB5X1","NEB5X2" )
+magma<-setNames(magma(n = 4, begin = 0.2, end = 0.9), type)
+p_all <- ggplot(WGA, aes(x = WGA_pol, y = unique_align, fill = WGA_pol)) +
+  geom_boxplot(outlier.shape = NA, position = position_dodge(width = 0.75), width = 0.6, alpha = 0.8) +  
+  geom_jitter(
+    color = "red",
+    position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.75),  
+    size = 1, alpha = 0.9
+  ) +
+  geom_hline(yintercept = log10(1000000), linetype = "dashed", color = "black", linewidth = 0.8) +
+  annotate("text", x = 1.4, y= log10(1000000), label = "1 million reads", color = "black", size = 5, vjust = -1)+
+  scale_fill_manual(values = magma)+
+  scale_y_continuous(limits = c(5,7.5), breaks = seq(5, 7.5, by = 0.5)) +  
+  labs(
+    title = "Unique alignment by WGA polymerases",
+    x = "Condition",
+    y = "Log10 aligned reads",
+    fill = "WGA polymerase"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    axis.text.x = element_text(hjust = 0.5, size = 14, color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    axis.title.x = element_text(size = 16, color = "black"),
+    axis.title.y = element_text(size = 16, color = "black"),
+    legend.text = element_text(size = 14, color = "black"), 
+    legend.title = element_text(size = 14, color = "black"),
+    axis.line = element_line(color = "black", linewidth = 0.8),
+    plot.title = element_text(size = 16, color= "black", hjust = 0.5)
+  )
+ggsave(paste0(OUTDIR, "/unique_alignment_by_pol_WGA-BS_new.png"), p_all, width = 4, height = 3)
+print(p_all)
+```
+
+# WGA-BS density plot
+```{r}
+#unique alignment
+WGA<-bulk[grep("^WGA-BS",bulk$type),]
+WGA$cond<-gsub("WGA-BS-","",WGA$cond)
+WGA$unique_align<-log10(WGA$unique_align)
+type<- c("EpiMark","EQUT","NEB5X1","NEB5X2" )
+magma<-setNames(magma(n = 4, begin = 0.2, end = 0.9), type)
+p_all <- ggplot(WGA, aes(x = unique_align, fill = WGA_pol)) +
+  geom_density(alpha = 0.8) +  
+  geom_vline(xintercept = log10(1000000), linetype = "dashed", color = "black", linewidth = 0.8) +
+  annotate("text", x = log10(1000000), y = 3, label = "1 million reads", color = "black", size = 5, hjust = 1.09) +
+  scale_fill_manual(values = magma) +
+  scale_x_continuous(limits = c(5, 7.5), breaks = seq(5, 7.5, by = 0.5)) +
+  labs(
+    title = "Unique alignment by conditions",
+    x = "Log10 aligned reads",
+    y = "Density",
+    fill = "WGA polymerase"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    axis.text.x = element_text(hjust = 0.5, size = 14, color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    axis.title.x = element_text(size = 16, color = "black"),
+    axis.title.y = element_text(size = 16, color = "black"),
+    legend.text = element_text(size = 14, color = "black"), 
+    legend.title = element_text(size = 14, color = "black"),
+    axis.line = element_line(color = "black", linewidth = 0.8),
+    plot.title = element_text(size = 16, color= "black", hjust = 0.5)
+  )+
+  guides(fill = guide_legend(nrow = 2, byrow = TRUE))
+ggsave(paste0(OUTDIR, "/unique_alignment_by_pol_WGA-BS_density_new.png"), p_all, width = 5, height = 5)
+
+print(p_all)
+
+
+```
+
+# Results 1.3 total CpG/GpC coverage 
+```{r}
+library(data.table)
+library(tidyverse)  
+library(dplyr)
+library(ggplot2)
+library(ggsignif)
+coverage_sample <- function(file_path) {
+  dt <- fread(file_path, header = FALSE,
+              col.names = c("chrom", "start", "end", "meth_pct", "meth_count", "unmeth_count"))
+  
+  sample <- sub("_dedup\\.merged\\.NOMe\\.CpG\\.cov$", "", basename(file_path))
+  total_site<- nrow(dt)
+  cleaned<-data.table(
+    sample= sample,
+    total_cpg= total_site
+  )
+  return (cleaned)
+}
+coverage_sample_gpc <- function(file_path) {
+  dt <- fread(file_path, header = FALSE,
+              col.names = c("chrom", "start", "end", "meth_pct", "meth_count", "unmeth_count"))
+  
+  sample <- sub("_dedup\\.merged\\.NOMe\\.GpC\\.cov$", "", basename(file_path))
+  total_site<- nrow(dt)
+  cleaned<-data.table(
+    sample= sample,
+    total_gpc= total_site
+  )
+  return (cleaned)
+}
+
+#nwga
+INPUT_DIR = "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/sin_WGA/bismark/SE/nondirectional/CPG_GPC"
+OUTPUT_DIR = "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/analysis/thesis"
+
+nwga_cpg = list.files(INPUT_DIR, "\\.merged\\.NOMe\\.CpG\\.cov$",full.names = TRUE)
+results_nwga_cpg <- rbindlist(lapply(nwga_cpg, coverage_sample))
+nwga_gpc = list.files(INPUT_DIR, "\\.merged\\.NOMe\\.GpC\\.cov$",full.names = TRUE)
+results_nwga_gpc <- rbindlist(lapply(nwga_gpc, coverage_sample_gpc))
+
+nwga<- left_join(results_nwga_cpg,results_nwga_gpc, by = "sample")
+
+#wga
+INPUT_DIR = "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/bismark/SE/nondirectional/CPG_GPC"
+
+wga_cpg = list.files(INPUT_DIR, "\\.merged\\.NOMe\\.CpG\\.cov$",full.names = TRUE)
+results_wga_cpg <- rbindlist(lapply(wga_cpg, coverage_sample))
+wga_gpc = list.files(INPUT_DIR, "\\.merged\\.NOMe\\.GpC\\.cov$",full.names = TRUE)
+results_wga_gpc <- rbindlist(lapply(wga_gpc, coverage_sample_gpc))
+
+wga<- left_join(results_wga_cpg,results_wga_gpc, by = "sample")
+
+#Gold sample
+INPUT_DIR = "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/OCUBF_R/bismark/SE/nondirectional/CPG_GPC"
+
+sample = list.files(INPUT_DIR, "*\\.merged\\.NOMe\\.CpG\\.cov$",full.names = TRUE)
+results_cpg <- rbindlist(lapply(sample, coverage_sample))
+sample_gpc = list.files(INPUT_DIR, "\\.merged\\.NOMe\\.GpC\\.cov$",full.names = TRUE)
+results_gpc <- rbindlist(lapply(sample_gpc, coverage_sample_gpc))
+
+results<- left_join(results_cpg,results_gpc, by = "sample")
+results$sample<- "OCUBF-reference"
+
+wga$type <- ifelse(
+  grepl("BS", wga$sample), "WGA-BS", 
+  ifelse(grepl("EM", wga$sample), "WGA-EM", NA)
+)
+nwga$type <- ifelse(
+  grepl("BS", nwga$sample), "nWGA-BS", 
+  ifelse(grepl("EM", nwga$sample), "nWGA-EM", NA)
+)
+results$type <- "OCUB-F reference"
+
+# Combine all data frames 
+coverage<- rbind(wga,nwga,results)
+
+
+coverage$WGA_pol <- ifelse(grepl("EpiMark_", coverage$sample), "EpiMark",
+                        ifelse(grepl("NEB5X1_", coverage$sample), "NEB5X1",
+                        ifelse(grepl("NEB5X2_", coverage$sample), "NEB5X2",
+                        ifelse(grepl("EQUT_", coverage$sample), "EQUT", NA))))
+
+coverage$DNA_pol <- ifelse(grepl("Q5U", coverage$sample), "Q5U",
+                        ifelse(grepl("Q5", coverage$sample), "Q5",
+                        ifelse(grepl("EQUT", coverage$sample), "EQUT", NA)))
+
+coverage$type<- factor(coverage$type, levels = c("nWGA-EM","nWGA-BS","WGA-EM","WGA-BS","OCUB-F reference"))
+coverage$total_cpg<-log10(coverage$total_cpg)
+coverage$total_gpc<-log10(coverage$total_gpc)
+
+#nwga
+nwga<-coverage[grep("nWGA",coverage$type),]
+nwga$type<-gsub("nWGA-","",nwga$type)
+nwga$type<-factor(nwga$type, levels = c("EM","BS"))
+cutoff <- log10(500000)
+
+p_all <- ggplot(nwga, aes(x = total_cpg, y = total_gpc)) +
+  geom_jitter(
+    aes(color = type),
+    position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.75),  
+    size = 2, alpha = 0.9
+  ) +
+    scale_color_manual(values = c("EM"="#3B0F70FF","BS"="#F1605DFF"))+
+  # Horizontal line (GpC)
+    geom_hline(yintercept = cutoff, linetype = "dashed", color = "black", linewidth = 0.8) +
+  annotate("text", x = 6.8, y= cutoff, label = "500,000 GpC sites", color = "black", size = 5, vjust = -0.5)+
+  # Vertical line (CpG)
+    geom_vline(xintercept = cutoff, linetype = "dashed", color = "darkred", linewidth = 0.8) +
+  annotate("text", x = cutoff, y= 6.3, label = "500,000 CpG sites", color = "darkred", size = 5, hjust = -0.05)+
+  scale_y_continuous(limits = c(5,7.5), breaks = seq(5,7.5,0.5))+
+  scale_x_continuous(limits = c(5,7.5), breaks = seq(5,7.5,0.5))+
+  labs(
+    title = "EM vs BS comparison",
+    x = "Log10 total CpG sites",
+    y = "Log10 total GpC sites",
+    color = "Method"
+    ) +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    axis.text.x = element_text(hjust = 0.5, size = 14, color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    axis.title.x = element_text(size = 16, color = "black"),
+    axis.title.y = element_text(size = 16, color = "black"),
+    legend.text = element_text(size = 14, color = "black"), 
+    legend.title = element_text(size = 14, color = "black"),
+    axis.line = element_line(color = "black", linewidth = 0.8),
+    plot.title = element_text(size = 16, color= "black", hjust = 0.5)
+  )
+ggsave(paste0(OUTPUT_DIR, "/meth_coverage_by_type_nwga_label.png"), p_all, width = 5, height = 3.5)
+print(p_all)
+
+#wga vs nwga
+BS_coverage<-coverage[grep("BS",coverage$type),]
+BS_coverage$type<-gsub("-BS","",BS_coverage$type)
+BS_coverage$type<-factor(BS_coverage$type, levels = c("nWGA","WGA"))
+p_all <- ggplot(BS_coverage, aes(x = total_cpg, y = total_gpc)) +
+  geom_jitter(
+    aes(color = type),
+    position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.75),  
+    size = 1.5, alpha = 0.9
+  ) +
+  scale_color_manual(values = c("nWGA"="#9A2D7FFF","WGA"="#FECE91FF"))+
+  geom_hline(yintercept = cutoff, linetype = "dashed", color = "black", linewidth = 0.8) +
+  annotate("text", x = 6.8, y= cutoff, label = "300,000 GpC sites", color = "black", size = 5, vjust = -0.5)+
+  geom_vline(xintercept = cutoff, linetype = "dashed", color = "darkred", linewidth = 0.8) +
+  annotate("text", x = cutoff, y= 6.3, label = "300,000 CpG sites", color = "darkred", size = 5, hjust = -0.05)+
+  scale_y_continuous(limits = c(5,7.5), breaks = seq(5,7.5,0.5))+
+  scale_x_continuous(limits = c(5,7.5), breaks = seq(5,7.5,0.5))+
+  labs(
+    title = "BS",
+    x = "Log10 total CpG sites",
+    y = "Log10 total GpC sites",
+    color = "Type"
+    ) +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    axis.text.x = element_text(hjust = 0.5, size = 14, color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    axis.title.x = element_text(size = 16, color = "black"),
+    axis.title.y = element_text(size = 16, color = "black"),
+    legend.text = element_text(size = 14, color = "black"), 
+    legend.title = element_text(size = 14, color = "black"),
+    axis.line = element_line(color = "black", linewidth = 0.8),
+    plot.title = element_text(size = 16, color= "black", hjust = 0.5)
+  )
+ggsave(paste0(OUTPUT_DIR, "/meth_coverage_by_bss_new.png"), p_all, width = 5, height = 3.5)
+print(p_all)
+
+#EM
+EM_coverage<-coverage[grep("EM",coverage$type),]
+EM_coverage$type<-gsub("-EM","",EM_coverage$type)
+EM_coverage$type<-factor(EM_coverage$type, levels = c("nWGA","WGA"))
+p_all <- ggplot(EM_coverage, aes(x = total_cpg, y = total_gpc)) +
+  geom_jitter(
+    aes(color = type),
+    position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.75),  
+    size = 1.5, alpha = 0.9
+  ) +
+  scale_color_manual(values = c("nWGA"="#9A2D7FFF","WGA"="#FECE91FF"))+
+  geom_hline(yintercept = cutoff, linetype = "dashed", color = "black", linewidth = 0.8) +
+  annotate("text", x = 6.8, y= cutoff, label = "300,000 GpC sites", color = "black", size = 5, vjust = -0.5)+
+  geom_vline(xintercept = cutoff, linetype = "dashed", color = "darkred", linewidth = 0.8) +
+  annotate("text", x = cutoff, y= 6.3, label = "300,000 CpG sites", color = "darkred", size = 5, hjust = -0.05)+
+  scale_y_continuous(limits = c(5,7.5), breaks = seq(5,7.5,0.5))+
+  scale_x_continuous(limits = c(5,7.5), breaks = seq(5,7.5,0.5))+
+  labs(
+    title = "EM",
+    x = "Log10 total CpG sites",
+    y = "Log10 total GpC sites",
+    color = "Type"
+    ) +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    axis.text.x = element_text(hjust = 0.5, size = 14, color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    axis.title.x = element_text(size = 16, color = "black"),
+    axis.title.y = element_text(size = 16, color = "black"),
+    legend.text = element_text(size = 14, color = "black"), 
+    legend.title = element_text(size = 14, color = "black"),
+    axis.line = element_line(color = "black", linewidth = 0.8),
+    plot.title = element_text(size = 16, color= "black", hjust = 0.5)
+  )
+ggsave(paste0(OUTPUT_DIR, "/meth_coverage_by_ems_new.png"), p_all, width = 5, height = 3.5)
+print(p_all)
+
+
+```
+
+#normalised
+# nWGAs
+```{r}
+nwga<-coverage[grep("nWGA",coverage$type),]
+nwga$type<-gsub("nWGA-","",nwga$type)
+nwga$type<-factor(nwga$type, levels = c("EM","BS"))
+nwga$total_cpg<-(nwga$total_cpg)^10
+nwga$total_gpc<-(nwga$total_gpc)^10
+
+mapped <- read.csv(paste0(OUTPUT_DIR, "/methylation used reads.csv"), header = TRUE)
+mapped_nwga<-mapped[mapped$sample %in% nwga$sample,]
+nwga$normalised_cpg<- nwga$total_cpg/mapped_nwga$reads
+nwga$normalised_gpc<- nwga$total_gpc/mapped_nwga$reads
+
+p_all <- ggplot(nwga, aes(x = normalised_cpg, y = normalised_gpc)) +
+  geom_jitter(
+    aes(color = type),
+    position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.75),  
+    size = 1.5, alpha = 0.9
+  ) +
+  scale_color_manual(values = c("EM"="#3B0F70FF","BS"="#F1605DFF"))+
+  labs(
+    title = "Normalised conversion methods' coverage",
+    x = "Normalised total CpG sites",
+    y = "Normalised total GpC sites",
+    color = "Method"
+    ) +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    axis.text.x = element_text(hjust = 0.5, size = 14, color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    axis.title.x = element_text(size = 16, color = "black"),
+    axis.title.y = element_text(size = 16, color = "black"),
+    legend.text = element_text(size = 14, color = "black"), 
+    legend.title = element_text(size = 14, color = "black"),
+    axis.line = element_line(color = "black", linewidth = 0.8),
+    plot.title = element_text(size = 16, color= "black", hjust = 0.5)
+  )
+ggsave(paste0(OUTPUT_DIR, "/meth_coverage_nwga_normalised_new.png"), p_all, width = 5, height = 3.5)
+print(p_all)
+
+```
+
+# nwga vs wga
+```{r}
+BS_coverage<-coverage[grep("BS",coverage$type),]
+BS_coverage$type<-gsub("-BS","",BS_coverage$type)
+BS_coverage$type<-factor(BS_coverage$type, levels = c("nWGA","WGA"))
+BS_coverage$total_cpg<-(BS_coverage$total_cpg)^10
+BS_coverage$total_gpc<-(BS_coverage$total_gpc)^10
+
+mapped <- read.csv(paste0(OUTPUT_DIR, "/methylation used reads.csv"), header = TRUE)
+mapped_bs<-mapped[mapped$sample %in% BS_coverage$sample,]
+mapped_bs <- mapped_bs[match(BS_coverage$sample, mapped_bs$sample), ]
+
+BS_coverage$normalised_cpg<- BS_coverage$total_cpg/mapped_bs$reads
+BS_coverage$normalised_gpc<- BS_coverage$total_gpc/mapped_bs$reads
+
+p_all <- ggplot(BS_coverage, aes(x = normalised_cpg, y = normalised_gpc)) +
+  geom_jitter(
+    aes(color = type),
+    position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.75),  
+    size = 1.5, alpha = 0.9
+  ) +
+  scale_color_manual(values = c("nWGA"="#9A2D7FFF","WGA"="#FECE91FF"))+
+  labs(
+    title = "BS",
+    x = "Normalised total CpG sites",
+    y = "Normalised total GpC sites",
+    color = "Type"
+    ) +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    axis.text.x = element_text(hjust = 0.5, size = 14, color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    axis.title.x = element_text(size = 16, color = "black"),
+    axis.title.y = element_text(size = 16, color = "black"),
+    legend.text = element_text(size = 14, color = "black"), 
+    legend.title = element_text(size = 14, color = "black"),
+    axis.line = element_line(color = "black", linewidth = 0.8),
+    plot.title = element_text(size = 16, color= "black", hjust = 0.5)
+  )
+ggsave(paste0(OUTPUT_DIR, "/meth_coverage_by_bss_normalised_new.png"), p_all, width = 5, height = 3.5)
+print(p_all)
+
+EM_coverage<-coverage[grep("EM",coverage$type),]
+EM_coverage$type<-gsub("-EM","",EM_coverage$type)
+EM_coverage$type<-factor(EM_coverage$type, levels = c("nWGA","WGA"))
+EM_coverage$total_cpg<-(EM_coverage$total_cpg)^10
+EM_coverage$total_gpc<-(EM_coverage$total_gpc)^10
+
+mapped <- read.csv(paste0(OUTPUT_DIR, "/methylation used reads.csv"), header = TRUE)
+mapped_em<-mapped[mapped$sample %in% EM_coverage$sample,]
+mapped_em <- mapped_em[match(EM_coverage$sample, mapped_em$sample), ]
+
+EM_coverage$normalised_cpg<- EM_coverage$total_cpg/mapped_em$reads
+EM_coverage$normalised_gpc<- EM_coverage$total_gpc/mapped_em$reads
+
+p_all <- ggplot(EM_coverage, aes(x = normalised_cpg, y = normalised_gpc)) +
+  geom_jitter(
+    aes(color = type),
+    position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.75),  
+    size = 1.5, alpha = 0.9
+  ) +
+  scale_color_manual(values = c("nWGA"="#9A2D7FFF","WGA"="#FECE91FF"))+
+  labs(
+    title = "EM",
+    x = "Normalised total CpG sites",
+    y = "Normalised total GpC sites",
+    color = "Type"
+    ) +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    axis.text.x = element_text(hjust = 0.5, size = 14, color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    axis.title.x = element_text(size = 16, color = "black"),
+    axis.title.y = element_text(size = 16, color = "black"),
+    legend.text = element_text(size = 14, color = "black"), 
+    legend.title = element_text(size = 14, color = "black"),
+    axis.line = element_line(color = "black", linewidth = 0.8),
+    plot.title = element_text(size = 16, color= "black", hjust = 0.5)
+  )
+ggsave(paste0(OUTPUT_DIR, "/meth_coverage_by_EMs_normalised_new.png"), p_all, width = 5, height = 3.5)
+print(p_all)
+
+#facet
+nwgawga<-rbind(BS_coverage,EM_coverage)
+nwgawga$method<-ifelse(grepl("BS", nwgawga$sample),"BS","EM")
+nwgawga$method<-factor(nwgawga$method,levels = c("EM","BS"))
+p_all <- ggplot(nwgawga, aes(x = normalised_cpg, y = normalised_gpc)) +
+  facet_grid(~ method)+
+  geom_jitter(
+    aes(color = type),
+    position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.75),  
+    size = 1.5, alpha = 0.9
+  ) +
+  scale_color_manual(values = c("nWGA"="#9A2D7FFF","WGA"="#FECE91FF"))+
+  labs(
+    title = "Normalised coverage comparison",
+    x = "Normalised total CpG sites",
+    y = "Normalised total GpC sites",
+    color = "Type"
+    ) +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    strip.text.y = element_text(size = 16,  lineheight = 1.2,  colour = "black", angle = 0),  
+    strip.text.x = element_text(size = 16, lineheight = 1.2, angle= 0, colour = "black"),
+    axis.text.x = element_text(hjust = 0.5, size = 14, color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    axis.title.x = element_text(size = 16, color = "black"),
+    axis.title.y = element_text(size = 16, color = "black"),
+    legend.text = element_text(size = 14, color = "black"), 
+    legend.title = element_text(size = 14, color = "black"),
+    axis.line = element_line(color = "black", linewidth = 0.8),
+    plot.title = element_text(size = 16, color= "black", hjust = 0.5)
+  )
+ggsave(paste0(OUTPUT_DIR, "/meth_coverage_by_nwgavswga_normalised_new.png"), p_all, width = 5, height = 3.5)
+print(p_all)
+```
+
+# WGA em vs bs
+```{r}
+wga<-coverage[grep("^WGA",coverage$type),]
+wga$type<-gsub("WGA-","",wga$type)
+wga$type<-factor(wga$type, levels = c("EM","BS"))
+cutoff <- log10(300000)
+
+p_all <- ggplot(wga, aes(x = total_cpg, y = total_gpc)) +
+  geom_jitter(
+    aes(color = type),
+    position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.75),  
+    size = 1.5, alpha = 0.9
+  ) +
+    scale_color_manual(values = c("EM"="#3B0F70FF","BS"="#F1605DFF"))+
+  # Horizontal line (GpC)
+    geom_hline(yintercept = cutoff, linetype = "dashed", color = "black", linewidth = 0.8) +
+  annotate("text", x = 6.8, y= cutoff, label = "300,000 GpC sites", color = "black", size = 5, vjust = -0.5)+
+  # Vertical line (CpG)
+    geom_vline(xintercept = cutoff, linetype = "dashed", color = "darkred", linewidth = 0.8) +
+  annotate("text", x = cutoff, y= 6.3, label = "300,000 CpG sites", color = "darkred", size = 5, hjust = -0.05)+
+  scale_y_continuous(limits = c(5,7.5), breaks = seq(5,7.5,0.5))+
+  scale_x_continuous(limits = c(5,7.5), breaks = seq(5,7.5,0.5))+
+  labs(
+    title = "WGA methods' methylation coverage",
+    x = "Log10 total CpG sites",
+    y = "Log10 total GpC sites",
+    color = "Method"
+    ) +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    axis.text.x = element_text(hjust = 0.5, size = 14, color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    axis.title.x = element_text(size = 16, color = "black"),
+    axis.title.y = element_text(size = 16, color = "black"),
+    legend.text = element_text(size = 14, color = "black"), 
+    legend.title = element_text(size = 14, color = "black"),
+    axis.line = element_line(color = "black", linewidth = 0.8),
+    plot.title = element_text(size = 16, color= "black", hjust = 0.5)
+  )
+ggsave(paste0(OUTPUT_DIR, "/meth_coverage_by_type_wga_new.png"), p_all, width = 5, height = 3.5)
+print(p_all)
+
+```
+
+# normalise wgas
+```{r}
+wga<-coverage[grep("^WGA",coverage$type),]
+wga$type<-gsub("WGA-","",wga$type)
+wga$type<-factor(wga$type, levels = c("EM","BS"))
+wga$total_cpg<-(wga$total_cpg)^10
+wga$total_gpc<-(wga$total_gpc)^10
+
+mapped <- read.csv(paste0(OUTPUT_DIR, "/methylation used reads.csv"), header = TRUE)
+mapped_wga<-mapped[mapped$sample %in% wga$sample,]
+mapped_wga <- mapped_wga[match(wga$sample, mapped_wga$sample), ]
+wga$normalised_cpg<- wga$total_cpg/mapped_wga$reads
+wga$normalised_gpc<- wga$total_gpc/mapped_wga$reads
+
+p_all <- ggplot(wga, aes(x = normalised_cpg, y = normalised_gpc)) +
+  geom_jitter(
+    aes(color = type),
+    position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.75),  
+    size = 1.5, alpha = 0.9
+  ) +
+  scale_color_manual(values = c("EM"="#3B0F70FF","BS"="#F1605DFF"))+
+  labs(
+      title = paste0("Normalised", "\n", "WGA methods' methylation coverage"),
+    x = "Normalised total CpG sites",
+    y = "Normalised total GpC sites",
+    color = "Method"
+    ) +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    axis.text.x = element_text(hjust = 0.5, size = 14, color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    axis.title.x = element_text(size = 16, color = "black"),
+    axis.title.y = element_text(size = 16, color = "black"),
+    legend.text = element_text(size = 14, color = "black"), 
+    legend.title = element_text(size = 14, color = "black"),
+    axis.line = element_line(color = "black", linewidth = 0.8),
+    plot.title = element_text(size = 16, color= "black", hjust = 0.5)
+  )
+ggsave(paste0(OUTPUT_DIR, "/meth_coverage_wga_normalised_new.png"), p_all, width = 5, height = 3.5)
+print(p_all)
+```
+
+# WGA-BS GpC+CPG
+```{r}
+wga<-coverage[coverage$type=="WGA-BS",]
+wga$type <- droplevels(wga$type)
+wga$WGA_pol<-factor(wga$WGA_pol, levels = c("EpiMark","EQUT","NEB5X1","NEB5X2") )
+type<- c("EpiMark","EQUT","NEB5X1","NEB5X2")
+magma<-setNames(magma(n = 4, begin = 0.2, end = 0.9), type)
+
+cutoff <- log10(300000)
+
+p_all <- ggplot(wga, aes(x = total_cpg, y = total_gpc)) +
+  geom_jitter(
+    aes(color = WGA_pol),
+    position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.75),  
+    size = 1.5, alpha = 0.9
+  ) +
+    scale_color_manual(values = magma)+
+  # Horizontal line (GpC)
+    geom_hline(yintercept = cutoff, linetype = "dashed", color = "black", linewidth = 0.8) +
+  annotate("text", x = 6.8, y= cutoff, label = "300,000 GpC sites", color = "black", size = 5, vjust = -0.5)+
+  # Vertical line (CpG)
+    geom_vline(xintercept = cutoff, linetype = "dashed", color = "darkred", linewidth = 0.8) +
+  annotate("text", x = cutoff, y= 6.3, label = "300,000 CpG sites", color = "darkred", size = 5, hjust = -0.05)+
+  scale_y_continuous(limits = c(5,7.5), breaks = seq(5,7.5,0.5))+
+  scale_x_continuous(limits = c(5,7.5), breaks = seq(5,7.5,0.5))+
+  labs(
+    title = "Conditions coverage comparison",
+    x = "Log10 total CpG sites",
+    y = "Log10 total GpC sites",
+    color = "WGA polymerase"
+    ) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    axis.text.x = element_text(hjust = 0.5, size = 14, color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    axis.title.x = element_text(size = 16, color = "black"),
+    axis.title.y = element_text(size = 16, color = "black"),
+    legend.text = element_text(size = 14, color = "black"), 
+    legend.title = element_text(size = 14, color = "black"),
+    axis.line = element_line(color = "black", linewidth = 0.8),
+    plot.title = element_text(size = 16, color= "black", hjust = 0.5)
+  )+
+  guides(color = guide_legend(nrow = 2, byrow = TRUE))
+ggsave(paste0(OUTPUT_DIR, "/meth_coverage_by_type_wga-bs_new.png"), p_all, width = 5, height = 5)
+print(p_all)
+```
+# Results 2.1 global methylation 
+# nwga global methylation
+```{r}
+INPUT="/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/analysis/thesis"
+OUTDIR="/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/analysis/thesis"
+#nWGA
+p1<-read.csv(paste0(INPUT,"/global_methylation_bs_nwga.csv"),header=TRUE)
+p5<-read.csv(paste0(INPUT,"/global_methylation_em_nwga.csv"),header=TRUE)
+
+p1<- rbind(p1,p5)
+colnames(p1) <- c("sample", "Negative control", "Positive control","Global methylation")
+
+p1$type <- ifelse(grepl("NA", p1$sample), "NA12878", "OCUB-F")
+p1$lib <- ifelse(grepl("EM", p1$sample), "EM", "BS")
+
+
+p1_long <- p1 %>%
+  pivot_longer(cols = c(`Negative control`, `Positive control`, `Global methylation`),
+               names_to = "Methylation_Type",
+               values_to = "Methylation_Percent")
+
+
+p1_long$Methylation_Type<- factor(p1_long$Methylation_Type, levels= c("Global methylation","Positive control","Negative control"))
+p1_long$lib<- factor(p1_long$lib, levels = c("EM", "BS"))
+
+p_bar <- ggplot(p1_long, aes(x = type, y = Methylation_Percent, fill = Methylation_Type)) +
+  geom_bar(
+    stat = "identity", 
+    position = position_dodge(), 
+    alpha = 0.8) +  
+  scale_fill_manual(values = c("#F1605DFF", "#3B0F70FF", "#FECE91FF"), name = "Methylation Type") +
+  facet_grid( ~ lib, scales = "free_x", space = "free_x") + 
+  geom_hline(yintercept = 2, linetype = "dashed", color = "black", linewidth = 0.8) +
+  annotate("text", x = 1.8, y= 2, label = "2% cutoff", color = "black", size = 5, vjust = 1.5)+
+  geom_hline(yintercept = 95, linetype = "dashed", color = "black", linewidth = 0.8) +
+  annotate("text", x = 1.8, y= 95, label = "95% cutoff", color = "black", size = 5, vjust = -0.5)+
+  scale_y_continuous(limits =c(-5,100), breaks = seq(0,100, by= 25))+
+  
+  labs(
+    x = "Sample",
+    y = "Methylation (%)",
+    title = "Global methylation comparison"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text( hjust = 0.5, size = 14,  colour = "black"),
+    legend.position = "bottom",
+    strip.text.y = element_text(size = 16,  lineheight = 1.2,  colour = "black", angle = 0),  
+    axis.text.y = element_text(angle = 0, hjust = 1,size=14, colour = "black"),
+    strip.text.x = element_text(size = 16, lineheight = 1.2, angle= 0, colour = "black"),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    legend.text = element_text(size = 14, colour = "black"), 
+    legend.title = element_text(size = 14, colour = "black"),
+    axis.title.x = element_text(size=16,colour = "black"),
+    axis.title.y = element_text(size=16,colour = "black"),
+    plot.title = element_text(size = 16, colour = "black", hjust = 0.5),
+    axis.line = element_line(color = "black", linewidth = 0.8)
+  )
+
+print(p_bar)
+ggsave(paste0(OUTDIR,"/scatter_plot_glob_nwga_new.png"), p_bar, width = 8, height = 5)
+```
+
+# WGA samples
+```{r}
+INPUT="/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/analysis/thesis"
+OUTDIR="/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/analysis/thesis"
+
+p1<-read.csv(paste0(INPUT,"/global_methylation_bs_wga.csv"),header=TRUE)
+p5<-read.csv(paste0(INPUT,"/global_methylation_em_wga.csv"),header=TRUE)
+p1$type <- ifelse(grepl("NA", p1$sample), "NA12878", "OCUB-F")
+p5$type <- ifelse(grepl("NA", p1$sample), "NA12878", "OCUB-F")
+
+p1<- p1 %>%
+  group_by(type) %>%
+  dplyr::summarise(
+    lib = "BS",
+    global_methylation_phage = mean(global_methylation_phage, na.rm = TRUE),
+    global_methylation_puc19 = mean(global_methylation_puc19, na.rm = TRUE),
+    global_methylation = mean(global_methylation, na.rm = TRUE)
+  )
+
+p5<- p5 %>%
+  group_by(type) %>%
+  dplyr::summarise(
+    lib = "EM",
+    global_methylation_phage = mean(global_methylation_phage, na.rm = TRUE),
+    global_methylation_puc19 = mean(global_methylation_puc19, na.rm = TRUE),
+    global_methylation = mean(global_methylation, na.rm = TRUE)
+  )
+p1<- rbind(p1,p5)
+colnames(p1) <- c("type","library", "Negative control", "Positive control","Global methylation")
+
+p1_long <- p1 %>%
+  pivot_longer(cols = c(`Negative control`, `Positive control`, `Global methylation`),
+               names_to = "Methylation_Type",
+               values_to = "Methylation_Percent")
+
+p1_long$Methylation_Type<- factor(p1_long$Methylation_Type, levels= c("Global methylation","Positive control","Negative control"))
+p1_long$library<- factor(p1_long$library, levels = c("EM", "BS"))
+
+p_bar <- ggplot(p1_long, aes(x = type, y = Methylation_Percent, fill = Methylation_Type)) +
+  geom_bar(
+    stat = "identity", 
+    position = position_dodge(), 
+    alpha = 0.8) +
+  scale_fill_manual(values = c("#F1605DFF", "#3B0F70FF", "#FECE91FF"), name = "Methylation Type") +
+  facet_grid( ~ library, scales = "free_x", space = "free_x") + 
+  geom_hline(yintercept = 2, linetype = "dashed", color = "black", linewidth = 0.8) +
+  annotate("text", x = 1.8, y= 2, label = "2% cutoff", color = "black", size = 5, vjust = 1.5)+
+  geom_hline(yintercept = 95, linetype = "dashed", color = "black", linewidth = 0.8) +
+  annotate("text", x = 1.8, y= 98, label = "95% cutoff", color = "black", size = 5, vjust = -0.5)+
+  scale_y_continuous(limits =c(-5,105), breaks = seq(0,100, by= 25))+
+  
+  labs(
+    x = "Sample",
+    y = "Methylation (%)",
+    title = "Global methylation comparison"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text( hjust = 0.5, size = 14,  colour = "black"),
+    legend.position = "bottom",
+    strip.text.y = element_text(size = 16,  lineheight = 1.2,  colour = "black", angle = 0),  
+    axis.text.y = element_text(angle = 0, hjust = 1,size=14, colour = "black"),
+    strip.text.x = element_text(size = 16, lineheight = 1.2, angle= 0, colour = "black"),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    legend.text = element_text(size = 14, colour = "black"), 
+    legend.title = element_text(size = 14, colour = "black"),
+    axis.title.x = element_text(size=16,colour = "black"),
+    axis.title.y = element_text(size=16,colour = "black"),
+    plot.title = element_text(size = 16, colour = "black", hjust = 0.5),
+    axis.line = element_line(color = "black", linewidth = 0.8)
+  )
+
+print(p_bar)
+ggsave(paste0(OUTDIR,"/scatter_plot_glob_wga_new.png"), p_bar, width = 8, height = 5)
+```
+
+# wga-bs polymerases
+```{r}
+# install.packages("ggh4x") (required updating ggplot2)
+
+INPUT="/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/analysis/thesis"
+OUTDIR="/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/analysis/thesis"
+p1<-read.csv(paste0(INPUT,"/global_methylation_bs_wga.csv"),header=TRUE)
+
+colnames(p1) <- c("sample", "Negative control", "Positive control","Global methylation")
+
+p1$WGA_pol <- ifelse(grepl("EpiMark_", p1$sample), "EpiMark",
+                        ifelse(grepl("NEB5X1_", p1$sample), "NEB5X1",
+                        ifelse(grepl("NEB5X2_", p1$sample), "NEB5X2",
+                        ifelse(grepl("EQUT_", p1$sample), "EQUT", NA))))
+
+p1$DNA_pol <- ifelse(grepl("Q5U", p1$sample), "Q5U",
+                        ifelse(grepl("Q5", p1$sample), "Q5",
+                        ifelse(grepl("EQUT", p1$sample), "EQUT", NA)))
+
+p1$type <- ifelse(grepl("NA", p1$sample), "NA12878", "OCUB-F")
+
+p1 <- p1 %>%
+  mutate(Label_Color = case_when(
+    `Negative control` > 2 & `Positive control` < 95 ~ "Controls Fail",
+    `Negative control` > 2 ~ "Negative Control Fail (> 2%)",
+    `Positive control` < 95 ~ "Positive Control Fail (< 95%)",
+    TRUE ~ "Pass"
+  ))
+
+# Reshape data to long format
+p1_long <- p1 %>%
+  pivot_longer(cols = c(`Negative control`, `Positive control`, `Global methylation`),
+               names_to = "Methylation_Type",
+               values_to = "Methylation_Percent")
+
+# Define color mapping for axis labels
+label_colors <- c("Controls Fail" = "purple", 
+                  "Negative Control Fail (> 2%)" = "blue2",
+                  "Positive Control Fail (< 95%)" = "red",
+                  "Pass" = "black")
+
+p1_long$sample<-paste0(p1_long$WGA_pol,'_',p1_long$DNA_pol,"_",p1_long$type)
+p1_long$DNA_pol <- factor(p1_long$DNA_pol, levels = c("EQUT", "Q5U", "Q5"))
+p1_long$Methylation_Type<- factor(p1_long$Methylation_Type, levels= c("Global methylation","Positive control","Negative control"))
+
+# wga-bs
+p1_long_points <- subset(p1_long, Label_Color == "Pass")
+p1_long_points$Label_Color <- factor(p1_long_points$Label_Color)
+
+p_bar <- ggplot(p1_long, aes(x = type, y = Methylation_Percent, fill = Methylation_Type)) +
+  geom_bar(
+    stat = "identity", 
+    position = position_dodge(), 
+    alpha = 0.8) +  
+  ggh4x::facet_nested("Library polymerase" + DNA_pol ~ "WGA polymerase" + WGA_pol) +  
+  scale_fill_manual(values = c("#F1605DFF", "#3B0F70FF", "#FECE91FF"), name = "Methylation type") +  
+  scale_y_continuous(limits =c(-5,100), breaks = seq(0,100, by= 25))+
+  labs(
+    x = "Sample",
+    y = "Methylation (%)"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    axis.text.x = element_text( hjust = 0.5, size = 14,  colour = "black"),
+    axis.text.y = element_text(angle = 0, hjust = 1,size=14, colour = "black"),
+    strip.text.y = element_text(size = 16,  lineheight = 1.2,  colour = "black", angle = -90),  
+    strip.text.x = element_text(size = 16, lineheight = 1.2, angle= 0, colour = "black"),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.minor.x = element_blank(),    
+    legend.text = element_text(size = 14, colour = "black"), 
+    legend.title = element_text(size = 14, colour = "black"),
+    legend.box = "vertical",
+    axis.title.x = element_text(size=16,colour = "black"),
+    axis.title.y = element_text(size=16,colour = "black"),
+    axis.line = element_line(color = "black", linewidth = 0.8)
+  ) +
+  geom_point(aes(x = type, y = -3, color = Label_Color),  
+             data = p1_long_points, inherit.aes = FALSE, size = 4, alpha= 1) + 
+  scale_color_manual(
+    values = label_colors[names(label_colors) == "Pass"],  
+    name = "Control thresholds"
+  )+
+  guides(
+    fill = guide_legend(nrow = 1, byrow = TRUE),
+    color = guide_legend(nrow = 1, byrow = TRUE)
+  )
+
+ggsave(paste0(OUTDIR,"/scatter_plot_glob_wgabs_new.png"), p_bar, width = 10, height = 5)
+
+```
+
+# Results 2.2 methylation pattern around transcription start site 
+# 2.2 Universal load
+```{r}
+library(GenomicRanges)
+library(ggplot2)
+library(dplyr)
+library(gridExtra)
+library(data.table)
+library(tidyverse)
+OUTDIR="/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/analysis/thesis"
+
+# bin window size in bp
+window_size <- 50
+# number of bases before and after
+extend <- 2000 
+file.tss <- "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/code/hg38.refGene.TSS.bed" #BED file with all human transcription start site positions
+#load tss data and convert to GRanges
+tss_data <- read.table(file.tss, header = FALSE, sep = "\t", stringsAsFactors = FALSE)
+colnames(tss_data) <- c("chrom", "start", "end", "tss_name")
+tss_data <- tss_data[tss_data$chrom != "chrM", ]
+tss_gr <- GRanges(seqnames = tss_data$chrom,
+                  ranges = IRanges(start = tss_data$start - extend, 
+                                   end = tss_data$start + extend),
+                  tss_name = tss_data$tss_name)
+#initialise bins from_gr 
+bins <- unlist(tile(tss_gr, width = window_size))
+#load file function
+load_coverage <- function(file_path) {
+  cov_data <- data.frame(fread(file_path), stringsAsFactors = FALSE)
+  colnames(cov_data) <- c("chrom", "start", "end", "methylation_percentage", "count_methylated", "count_unmethylated")
+  cov_data$cov<- cov_data$count_methylated + cov_data$count_unmethylated
+  return(cov_data)
+}
+```
+
+# 2.2 data processing-WGA
+```{r}
+dir.input.all <- "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/bismark/SE/nondirectional/CPG_GPC"
+cov_files_cpg <- list.files(dir.input.all, pattern = "\\.CpG\\.cov$", full.names = TRUE)
+cov_files_gpc <- list.files(dir.input.all, pattern = "\\.GpC\\.cov$", full.names = TRUE)
+
+#mean for each bin 
+#load gpc data
+gr_gpc <- list()
+gr_gpc <- do.call(rbind, lapply(cov_files_gpc, function(file) {
+  gpc <- load_coverage(file)
+  gpc$sample <- sapply(strsplit(basename(file), "_dedup"), "[", 1)
+  return(gpc)
+}))
+
+# Convert the aggregated data to GRanges in one go
+gr_gpc <- makeGRangesFromDataFrame(gr_gpc, 
+                                   seqnames.field = "chrom",
+                                   start.field = "start",
+                                   end.field = "end",
+                                   keep.extra.columns = TRUE)
+#load cpg data
+gr_cpg <- list()
+gr_cpg <- do.call(rbind, lapply(cov_files_cpg, function(file) {
+  cpg <- load_coverage(file)
+  cpg$sample <- sapply(strsplit(basename(file), "_dedup"), "[", 1)
+  return(cpg)
+}))
+
+# Convert the aggregated data to GRanges in one go
+gr_cpg <- makeGRangesFromDataFrame(gr_cpg, 
+                                   seqnames.field = "chrom",
+                                   start.field = "start",
+                                   end.field = "end",
+                                   keep.extra.columns = TRUE)
+
+
+# Initialize lists to store averages for each sample
+avg.cpg.bins <- list()
+avg.gpc.bins <- list()
+
+# Process each sample separately for CpG and GpC
+for (sample in unique(gr_cpg$sample)) {
+  cat("Processing sample:", sample, "\n")
+
+  # Subset the GRanges object for the current sample
+  gr_cpg_sample <- gr_cpg[gr_cpg$sample == sample]
+  gr_gpc_sample <- gr_gpc[gr_gpc$sample == sample]
+
+  # Initialize NA-filled vectors for the sample
+  sample_avg_cpg <- rep(NA, length(bins))
+  sample_avg_gpc <- rep(NA, length(bins))
+
+  # Process each chromosome separately
+  for (chr in seqlevels(bins)) {
+    cat("Processing chromosome:", chr, "\n")
+    
+    # Subset bins and methylation data for the chromosome
+    bins_chr <- bins[seqnames(bins) == chr]
+    gr_cpg_sample_chr <- gr_cpg_sample[seqnames(gr_cpg_sample) == chr]
+    gr_gpc_sample_chr <- gr_gpc_sample[seqnames(gr_gpc_sample) == chr]
+
+    # Skip chromosomes with no data
+    if (length(gr_cpg_sample_chr) == 0 && length(gr_gpc_sample_chr) == 0) {
+      next
+    }
+
+    # Calculate overlaps for the chromosome
+    overlaps_cpg <- findOverlaps(bins_chr, gr_cpg_sample_chr)
+    overlaps_gpc <- findOverlaps(bins_chr, gr_gpc_sample_chr)
+
+    # Calculate mean methylation for CpG and GpC for the chromosome
+    cpg_means <- tapply(gr_cpg_sample_chr$methylation_percentage[subjectHits(overlaps_cpg)],
+                        queryHits(overlaps_cpg), mean, na.rm = TRUE)
+    gpc_means <- tapply(gr_gpc_sample_chr$methylation_percentage[subjectHits(overlaps_gpc)],
+                        queryHits(overlaps_gpc), mean, na.rm = TRUE)
+
+    # Assign the calculated means to the corresponding bins
+    sample_avg_cpg[as.integer(names(cpg_means)) + which(seqnames(bins) == chr)[1] - 1] <- cpg_means
+    sample_avg_gpc[as.integer(names(gpc_means)) + which(seqnames(bins) == chr)[1] - 1] <- gpc_means
+  }
+
+  # Store the results in the list, using the sample name as the key
+  avg.cpg.bins[[sample]] <- sample_avg_cpg
+  avg.gpc.bins[[sample]] <- sample_avg_gpc
+}
+
+#mean for each relative position (cpg/gpc) per sample
+#find relative position cpg and gpc methylation for each sample
+all_methylation_data <- data.frame()
+all_chrom_data<- data.frame()
+
+# Loop through each sample in avg.cpg.bins
+for (s in names(avg.cpg.bins)) {
+  # Get the average methylation values for the current sample
+  sample_avg_meth <- avg.cpg.bins[[s]]
+  # Create a data frame for the current sample
+  methylation_data <- data.frame(
+    bin_start = start(bins),
+    relative_position = rep(seq(-2000, 2000, by = window_size), length(tss_gr)),
+    avg_meth = sample_avg_meth  # Assuming avg.cpg.bins are aligned with bins
+  )
+  
+  # Add a column for the sample name
+  methylation_data$sample <- s
+  # Combine the current sample data with the all_methylation_data data frame
+  all_methylation_data <- rbind(all_methylation_data, methylation_data)
+}
+
+# Group by relative position and calculate mean methylation across all samples
+mean_methylation <- list()
+for (s in unique(all_methylation_data$sample)) {
+  sample_meth_data <- all_methylation_data %>%
+    dplyr::filter(sample == s) %>%
+    as.data.frame()  # Just in case it's a data.table
+
+  mean_methylation[[s]] <- sample_meth_data %>%
+    dplyr::group_by(relative_position) %>%
+    dplyr::summarize(mean_avg_meth = mean(avg_meth, na.rm = TRUE), .groups = "drop")
+}
+
+#chromatin accessibility
+for (s in names(avg.gpc.bins)) {
+  sample_avg_chrom <- avg.gpc.bins[[s]]
+  # Create a data frame for the current sample
+  chrom_data <- data.frame(
+    bin_start = start(bins),
+    relative_position = rep(seq(-2000, 2000, by = window_size), length(tss_gr)),
+    avg_chrom = sample_avg_chrom  # Assuming avg.cpg.bins are aligned with bins
+  )
+  
+  # Add a column for the sample name
+  chrom_data$sample <- s
+  # Combine the current sample data with the all_methylation_data data frame
+  all_chrom_data <- rbind(all_chrom_data, chrom_data)
+}
+
+# Group by relative position and calculate mean methylation across all samples
+mean_chrom<-list()
+for (s in unique(all_chrom_data$sample)){
+  sample_chrom_data <- all_chrom_data %>%
+    dplyr::filter(sample == s)
+
+  # Calculate mean average methylation for the current sample
+  mean_chrom[[s]] <- sample_chrom_data %>%
+   dplyr::group_by(relative_position) %>%
+    dplyr::summarize(mean_avg_meth = mean(avg_chrom, na.rm = TRUE), .groups = 'drop')
+}
+
+```
+# 2.2 plot by condition comparison WGA-BS
+```{r}
+plot_bs<-plot_data[which(plot_data$method == "BS"),]
+plot_bs$wga<-gsub("-.*","",plot_bs$condition)
+plot_bs$cell<-ifelse( grepl("NA12878", plot_bs$sample), "NA12878", "OCUB-F")
+unique_polys <- unique(plot_bs$wga)
+for (poly in unique_polys){
+  poly_data<-plot_bs[which(plot_bs$wga== poly),]
+  p<- ggplot(poly_data, aes(x = relative_position, y = mean_avg_meth, color = type, group = interaction(sample, type))) +
+    geom_line(linewidth = 1.8) +
+    facet_wrap(cell~ condition, scales = "free_x") +
+    labs(
+       x = "Relative Position to TSS (bp)",
+       y = "Average Methylation",
+       title = "Methylation pattern around TSS for WGA-BS libraries",
+       color = "Methylation Type") +
+    scale_y_continuous(limits = c(0, 65), breaks = seq(0, 60, by = 20))+ 
+    theme_minimal() +
+    theme(
+      panel.spacing = unit(0.8, "cm"),
+      legend.position = "right",
+      axis.text.x = element_text( hjust = 0.5, size = 14,  colour = "black"),
+      axis.text.y = element_text(angle = 0, hjust = 1,size=14, colour = "black"),
+      strip.text.y = element_text(size = 16,  lineheight = 1.2,  colour = "black", angle = -90),  
+      strip.text.x = element_text(size = 16, lineheight = 1.2, angle= 0, colour = "black"),
+      panel.grid.minor.y = element_blank(),
+      panel.grid.minor.x = element_blank(),    
+      legend.text = element_text(size = 14, colour = "black"), 
+      legend.title = element_text(size = 14, colour = "black"),
+      axis.title.x = element_text(size=16,colour = "black"),
+      axis.title.y = element_text(size=16,colour = "black"),
+      axis.line = element_line(color = "black", linewidth = 0.8),
+      plot.title = element_text(size = 16, colour = "black", hjust = 0.5)
+      )
+  ggsave(paste0(OUTDIR,"/tss/tss_methylation_test_new_grouping_", poly, ".png"), plot = p, width = 12, height = 6)
+}
+```
+# Plot for em and bs overall
+```{r}
+plot_data$cell<-ifelse( grepl("NA12878", plot_data$sample), "NA12878", "OCUB-F")
+plot_all<- plot_data %>%
+  group_by(method,cell, type,relative_position) %>%
+  dplyr::summarise(
+    mean_avg_meth= mean(mean_avg_meth)
+  )
+p<- ggplot(plot_all, aes(x = relative_position, y = mean_avg_meth, color = type, group = interaction(cell, type))) +
+    geom_line(linewidth = 1.8) +
+    facet_wrap(method~ cell, scales = "free_x") +
+    labs(
+       x = "Relative Position to TSS (bp)",
+       y = "Average Methylation",
+       title = "Methylation pattern around TSS for WGA methods",
+       color = "Methylation Type") +
+    scale_y_continuous(limits = c(0, 65), breaks = seq(0, 60, by = 20))+ 
+    theme_minimal() +
+    theme(
+      panel.spacing = unit(0.8, "cm"),
+      legend.position = "right",
+      axis.text.x = element_text( hjust = 0.5, size = 14,  colour = "black"),
+      axis.text.y = element_text(angle = 0, hjust = 1,size=14, colour = "black"),
+      strip.text.y = element_text(size = 16,  lineheight = 1.2,  colour = "black", angle = -90),  
+      strip.text.x = element_text(size = 16, lineheight = 1.2, angle= 0, colour = "black"),
+      panel.grid.minor.y = element_blank(),
+      panel.grid.minor.x = element_blank(),    
+      legend.text = element_text(size = 14, colour = "black"), 
+      legend.title = element_text(size = 14, colour = "black"),
+      axis.title.x = element_text(size=16,colour = "black"),
+      axis.title.y = element_text(size=16,colour = "black"),
+      axis.line = element_line(color = "black", linewidth = 0.8),
+      plot.title = element_text(size = 16, colour = "black", hjust = 0.5)
+      )
+ggsave(paste0(OUTDIR,"/tss/tss_methylation_test_new_grouping_WGAs.png"), plot = p, width = 8, height = 6)
+
+```
+
+# 2.2 data processing-nWGA
+```{r}
+dir.input.all <- "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/sin_WGA/bismark/SE/nondirectional/CPG_GPC"
+cov_files_cpg <- list.files(dir.input.all, pattern = "\\.CpG\\.cov$", full.names = TRUE)
+cov_files_gpc <- list.files(dir.input.all, pattern = "\\.GpC\\.cov$", full.names = TRUE)
+
+#mean for each bin 
+#load gpc data
+gr_gpc <- list()
+gr_gpc <- do.call(rbind, lapply(cov_files_gpc, function(file) {
+  gpc <- load_coverage(file)
+  gpc$sample <- sapply(strsplit(basename(file), "_dedup"), "[", 1)
+  return(gpc)
+}))
+
+# Convert the aggregated data to GRanges in one go
+gr_gpc <- makeGRangesFromDataFrame(gr_gpc, 
+                                   seqnames.field = "chrom",
+                                   start.field = "start",
+                                   end.field = "end",
+                                   keep.extra.columns = TRUE)
+#load cpg data
+gr_cpg <- list()
+gr_cpg <- do.call(rbind, lapply(cov_files_cpg, function(file) {
+  cpg <- load_coverage(file)
+  cpg$sample <- sapply(strsplit(basename(file), "_dedup"), "[", 1)
+  return(cpg)
+}))
+
+# Convert the aggregated data to GRanges in one go
+gr_cpg <- makeGRangesFromDataFrame(gr_cpg, 
+                                   seqnames.field = "chrom",
+                                   start.field = "start",
+                                   end.field = "end",
+                                   keep.extra.columns = TRUE)
+
+
+# Initialize lists to store averages for each sample
+avg.cpg.bins <- list()
+avg.gpc.bins <- list()
+
+# Process each sample separately for CpG and GpC
+for (sample in unique(gr_cpg$sample)) {
+  cat("Processing sample:", sample, "\n")
+
+  # Subset the GRanges object for the current sample
+  gr_cpg_sample <- gr_cpg[gr_cpg$sample == sample]
+  gr_gpc_sample <- gr_gpc[gr_gpc$sample == sample]
+
+  # Initialize NA-filled vectors for the sample
+  sample_avg_cpg <- rep(NA, length(bins))
+  sample_avg_gpc <- rep(NA, length(bins))
+
+  # Process each chromosome separately
+  for (chr in seqlevels(bins)) {
+    cat("Processing chromosome:", chr, "\n")
+    
+    # Subset bins and methylation data for the chromosome
+    bins_chr <- bins[seqnames(bins) == chr]
+    gr_cpg_sample_chr <- gr_cpg_sample[seqnames(gr_cpg_sample) == chr]
+    gr_gpc_sample_chr <- gr_gpc_sample[seqnames(gr_gpc_sample) == chr]
+
+    # Skip chromosomes with no data
+    if (length(gr_cpg_sample_chr) == 0 && length(gr_gpc_sample_chr) == 0) {
+      next
+    }
+
+    # Calculate overlaps for the chromosome
+    overlaps_cpg <- findOverlaps(bins_chr, gr_cpg_sample_chr)
+    overlaps_gpc <- findOverlaps(bins_chr, gr_gpc_sample_chr)
+
+    # Calculate mean methylation for CpG and GpC for the chromosome
+    cpg_means <- tapply(gr_cpg_sample_chr$methylation_percentage[subjectHits(overlaps_cpg)],
+                        queryHits(overlaps_cpg), mean, na.rm = TRUE)
+    gpc_means <- tapply(gr_gpc_sample_chr$methylation_percentage[subjectHits(overlaps_gpc)],
+                        queryHits(overlaps_gpc), mean, na.rm = TRUE)
+
+    # Assign the calculated means to the corresponding bins
+    sample_avg_cpg[as.integer(names(cpg_means)) + which(seqnames(bins) == chr)[1] - 1] <- cpg_means
+    sample_avg_gpc[as.integer(names(gpc_means)) + which(seqnames(bins) == chr)[1] - 1] <- gpc_means
+  }
+
+  # Store the results in the list, using the sample name as the key
+  avg.cpg.bins[[sample]] <- sample_avg_cpg
+  avg.gpc.bins[[sample]] <- sample_avg_gpc
+}
+
+#mean for each relative position (cpg/gpc) per sample
+#find relative position cpg and gpc methylation for each sample
+all_methylation_data <- data.frame()
+all_chrom_data<- data.frame()
+
+# Loop through each sample in avg.cpg.bins
+for (s in names(avg.cpg.bins)) {
+  # Get the average methylation values for the current sample
+  sample_avg_meth <- avg.cpg.bins[[s]]
+  # Create a data frame for the current sample
+  methylation_data <- data.frame(
+    bin_start = start(bins),
+    relative_position = rep(seq(-2000, 2000, by = window_size), length(tss_gr)),
+    avg_meth = sample_avg_meth  # Assuming avg.cpg.bins are aligned with bins
+  )
+  
+  # Add a column for the sample name
+  methylation_data$sample <- s
+  # Combine the current sample data with the all_methylation_data data frame
+  all_methylation_data <- rbind(all_methylation_data, methylation_data)
+}
+
+# Group by relative position and calculate mean methylation across all samples
+mean_methylation <- list()
+for (s in unique(all_methylation_data$sample)) {
+  sample_meth_data <- all_methylation_data %>%
+    dplyr::filter(sample == s) %>%
+    as.data.frame()  # Just in case it's a data.table
+
+  mean_methylation[[s]] <- sample_meth_data %>%
+    dplyr::group_by(relative_position) %>%
+    dplyr::summarize(mean_avg_meth = mean(avg_meth, na.rm = TRUE), .groups = "drop")
+}
+
+#chromatin accessibility
+for (s in names(avg.gpc.bins)) {
+  sample_avg_chrom <- avg.gpc.bins[[s]]
+  # Create a data frame for the current sample
+  chrom_data <- data.frame(
+    bin_start = start(bins),
+    relative_position = rep(seq(-2000, 2000, by = window_size), length(tss_gr)),
+    avg_chrom = sample_avg_chrom  # Assuming avg.cpg.bins are aligned with bins
+  )
+  
+  # Add a column for the sample name
+  chrom_data$sample <- s
+  # Combine the current sample data with the all_methylation_data data frame
+  all_chrom_data <- rbind(all_chrom_data, chrom_data)
+}
+
+# Group by relative position and calculate mean methylation across all samples
+mean_chrom<-list()
+for (s in unique(all_chrom_data$sample)){
+  sample_chrom_data <- all_chrom_data %>%
+    dplyr::filter(sample == s)
+
+  # Calculate mean average methylation for the current sample
+  mean_chrom[[s]] <- sample_chrom_data %>%
+   dplyr::group_by(relative_position) %>%
+    dplyr::summarize(mean_avg_meth = mean(avg_chrom, na.rm = TRUE), .groups = 'drop')
+}
+
+```
+# 2.2 plot for nWGA
+```{r}
+#prepare plot dataframe 
+plot_data <- data.frame()
+for (s in names(mean_methylation)) {
+  # Get the data for the current sample
+  methylation_data <- mean_methylation[[s]]
+  chrom_data <- mean_chrom[[s]]
+
+  # Add a column to indicate the type of methylation
+  methylation_data$type <- "CpG methylation"
+  chrom_data$type <- "GpC methylation"
+
+  # Combine the two data frames
+  combined_data <- bind_rows(methylation_data, chrom_data)
+  
+  # Add sample name to the combined data
+  combined_data$sample <- s
+  # Extract WGA_poly prefix (part after the second underscore)
+  combined_data$sample<- gsub("_","-",combined_data$sample)
+  combined_data$plot_combo<- sub("(^[^-]+)-[^-]+-", "\\1-", combined_data$sample)
+  # Append to the plot_data data frame
+  plot_data <- bind_rows(plot_data, combined_data)
+}
+plot_data$method <- ifelse( grepl("BS", plot_data$sample), "BS", "EM")
+plot_data$cell<- ifelse(grepl("NA12878", plot_data$sample), "NA12878","OCUB-F")
+plot_data$facet_label <- paste0(plot_data$cell, "\n", plot_data$method)
+
+
+p<- ggplot(plot_data, aes(x = relative_position, y = mean_avg_meth, color = type, group = interaction(sample, type))) +
+    geom_line(linewidth = 1.8) +
+    facet_grid(~ facet_label, scales = "free_x") +
+    labs(
+       x = "Relative Position to TSS (bp)",
+       y = "Average Methylation",
+       title = "Methylation pattern around TSS for nWGA libraries",
+       color = "Methylation Type") +
+    scale_y_continuous(limits = c(0, 65), breaks = seq(0, 60, by = 20))+ 
+    theme_minimal() +
+    theme(
+      panel.spacing = unit(0.8, "cm"),
+      legend.position = "right",
+      axis.text.x = element_text( hjust = 0.5, size = 14,  colour = "black"),
+      axis.text.y = element_text(angle = 0, hjust = 1,size=14, colour = "black"),
+      strip.text.y = element_text(size = 16,  lineheight = 1.2,  colour = "black", angle = -90),  
+      strip.text.x = element_text(size = 16, lineheight = 1.2, angle= 0, colour = "black"),
+      panel.grid.minor.y = element_blank(),
+      panel.grid.minor.x = element_blank(),    
+      legend.text = element_text(size = 14, colour = "black"), 
+      legend.title = element_text(size = 14, colour = "black"),
+      axis.title.x = element_text(size=16,colour = "black"),
+      axis.title.y = element_text(size=16,colour = "black"),
+      axis.line = element_line(color = "black", linewidth = 0.8),
+      plot.title = element_text(size = 16, colour = "black", hjust = 0.5)
+      )
+ggsave(paste0(OUTDIR,"/tss/tss_methylation_test_new_nWGA_.png"), plot = p, width = 14, height = 3)
+
+```
+
+# 2.2 OCUB-F reference
+```{r}
+dir.input.all <- "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/OCUBF_R/bismark/SE/nondirectional/CPG_GPC"
+cov_files_cpg <- list.files(dir.input.all, pattern = "\\.CpG\\.cov$", full.names = TRUE)
+cov_files_gpc <- list.files(dir.input.all, pattern = "\\.GpC\\.cov$", full.names = TRUE)
+
+#mean for each bin 
+#load gpc data
+gr_gpc <- list()
+gr_gpc <- do.call(rbind, lapply(cov_files_gpc, function(file) {
+  gpc <- load_coverage(file)
+  gpc$sample <- sapply(strsplit(basename(file), "_dedup"), "[", 1)
+  return(gpc)
+}))
+
+# Convert the aggregated data to GRanges in one go
+gr_gpc <- makeGRangesFromDataFrame(gr_gpc, 
+                                   seqnames.field = "chrom",
+                                   start.field = "start",
+                                   end.field = "end",
+                                   keep.extra.columns = TRUE)
+#load cpg data
+gr_cpg <- list()
+gr_cpg <- do.call(rbind, lapply(cov_files_cpg, function(file) {
+  cpg <- load_coverage(file)
+  cpg$sample <- sapply(strsplit(basename(file), "_dedup"), "[", 1)
+  return(cpg)
+}))
+
+# Convert the aggregated data to GRanges in one go
+gr_cpg <- makeGRangesFromDataFrame(gr_cpg, 
+                                   seqnames.field = "chrom",
+                                   start.field = "start",
+                                   end.field = "end",
+                                   keep.extra.columns = TRUE)
+
+
+# Initialize lists to store averages for each sample
+avg.cpg.bins <- list()
+avg.gpc.bins <- list()
+
+# Process each sample separately for CpG and GpC
+for (sample in unique(gr_cpg$sample)) {
+  cat("Processing sample:", sample, "\n")
+
+  # Subset the GRanges object for the current sample
+  gr_cpg_sample <- gr_cpg[gr_cpg$sample == sample]
+  gr_gpc_sample <- gr_gpc[gr_gpc$sample == sample]
+
+  # Initialize NA-filled vectors for the sample
+  sample_avg_cpg <- rep(NA, length(bins))
+  sample_avg_gpc <- rep(NA, length(bins))
+
+  # Process each chromosome separately
+  for (chr in seqlevels(bins)) {
+    cat("Processing chromosome:", chr, "\n")
+    
+    # Subset bins and methylation data for the chromosome
+    bins_chr <- bins[seqnames(bins) == chr]
+    gr_cpg_sample_chr <- gr_cpg_sample[seqnames(gr_cpg_sample) == chr]
+    gr_gpc_sample_chr <- gr_gpc_sample[seqnames(gr_gpc_sample) == chr]
+
+    # Skip chromosomes with no data
+    if (length(gr_cpg_sample_chr) == 0 && length(gr_gpc_sample_chr) == 0) {
+      next
+    }
+
+    # Calculate overlaps for the chromosome
+    overlaps_cpg <- findOverlaps(bins_chr, gr_cpg_sample_chr)
+    overlaps_gpc <- findOverlaps(bins_chr, gr_gpc_sample_chr)
+
+    # Calculate mean methylation for CpG and GpC for the chromosome
+    cpg_means <- tapply(gr_cpg_sample_chr$methylation_percentage[subjectHits(overlaps_cpg)],
+                        queryHits(overlaps_cpg), mean, na.rm = TRUE)
+    gpc_means <- tapply(gr_gpc_sample_chr$methylation_percentage[subjectHits(overlaps_gpc)],
+                        queryHits(overlaps_gpc), mean, na.rm = TRUE)
+
+    # Assign the calculated means to the corresponding bins
+    sample_avg_cpg[as.integer(names(cpg_means)) + which(seqnames(bins) == chr)[1] - 1] <- cpg_means
+    sample_avg_gpc[as.integer(names(gpc_means)) + which(seqnames(bins) == chr)[1] - 1] <- gpc_means
+  }
+
+  # Store the results in the list, using the sample name as the key
+  avg.cpg.bins[[sample]] <- sample_avg_cpg
+  avg.gpc.bins[[sample]] <- sample_avg_gpc
+}
+
+#mean for each relative position (cpg/gpc) per sample
+#find relative position cpg and gpc methylation for each sample
+all_methylation_data <- data.frame()
+all_chrom_data<- data.frame()
+
+# Loop through each sample in avg.cpg.bins
+for (s in names(avg.cpg.bins)) {
+  # Get the average methylation values for the current sample
+  sample_avg_meth <- avg.cpg.bins[[s]]
+  # Create a data frame for the current sample
+  methylation_data <- data.frame(
+    bin_start = start(bins),
+    relative_position = rep(seq(-2000, 2000, by = window_size), length(tss_gr)),
+    avg_meth = sample_avg_meth  # Assuming avg.cpg.bins are aligned with bins
+  )
+  
+  # Add a column for the sample name
+  methylation_data$sample <- s
+  # Combine the current sample data with the all_methylation_data data frame
+  all_methylation_data <- rbind(all_methylation_data, methylation_data)
+}
+
+# Group by relative position and calculate mean methylation across all samples
+mean_methylation <- list()
+for (s in unique(all_methylation_data$sample)) {
+  sample_meth_data <- all_methylation_data %>%
+    dplyr::filter(sample == s) %>%
+    as.data.frame()  # Just in case it's a data.table
+
+  mean_methylation[[s]] <- sample_meth_data %>%
+    dplyr::group_by(relative_position) %>%
+    dplyr::summarize(mean_avg_meth = mean(avg_meth, na.rm = TRUE), .groups = "drop")
+}
+
+#chromatin accessibility
+for (s in names(avg.gpc.bins)) {
+  sample_avg_chrom <- avg.gpc.bins[[s]]
+  # Create a data frame for the current sample
+  chrom_data <- data.frame(
+    bin_start = start(bins),
+    relative_position = rep(seq(-2000, 2000, by = window_size), length(tss_gr)),
+    avg_chrom = sample_avg_chrom  # Assuming avg.cpg.bins are aligned with bins
+  )
+  
+  # Add a column for the sample name
+  chrom_data$sample <- s
+  # Combine the current sample data with the all_methylation_data data frame
+  all_chrom_data <- rbind(all_chrom_data, chrom_data)
+}
+
+# Group by relative position and calculate mean methylation across all samples
+mean_chrom<-list()
+for (s in unique(all_chrom_data$sample)){
+  sample_chrom_data <- all_chrom_data %>%
+    dplyr::filter(sample == s)
+
+  # Calculate mean average methylation for the current sample
+  mean_chrom[[s]] <- sample_chrom_data %>%
+   dplyr::group_by(relative_position) %>%
+    dplyr::summarize(mean_avg_meth = mean(avg_chrom, na.rm = TRUE), .groups = 'drop')
+}
+```
+# 2.2 plot OCUB-F reference
+```{r}
+plot_data <- data.frame()
+for (s in names(mean_methylation)) {
+  methylation_data <- mean_methylation[[s]]
+  chrom_data <- mean_chrom[[s]]
+  methylation_data$type <- "CpG methylation"
+  chrom_data$type <- "GpC methylation"
+  plot_data <- bind_rows(methylation_data, chrom_data)
+  plot_data$sample <- "OCUB-F control"
+}
+
+p<- ggplot(plot_data, aes(x = relative_position, y = mean_avg_meth, color = type)) +
+    geom_line(linewidth = 1.8) +
+    labs(
+       x = "Relative Position to TSS (bp)",
+       y = "Average Methylation",
+       title = paste0("Methylation pattern around TSS","\n", "for OCUB-F reference"),
+       color = "Methylation Type") +
+    scale_y_continuous(limits = c(0, 65), breaks = seq(0, 60, by = 20))+ 
+    theme_minimal() +
+    theme(
+      panel.spacing = unit(0.8, "cm"),
+      legend.position = "right",
+      axis.text.x = element_text( hjust = 0.5, size = 14,  colour = "black"),
+      axis.text.y = element_text(angle = 0, hjust = 1,size=14, colour = "black"),
+      strip.text.y = element_text(size = 16,  lineheight = 1.2,  colour = "black", angle = -90),  
+      strip.text.x = element_text(size = 16, lineheight = 1.2, angle= 0, colour = "black"),
+      panel.grid.minor.y = element_blank(),
+      panel.grid.minor.x = element_blank(),    
+      legend.text = element_text(size = 14, colour = "black"), 
+      legend.title = element_text(size = 14, colour = "black"),
+      axis.title.x = element_text(size=16,colour = "black"),
+      axis.title.y = element_text(size=16,colour = "black"),
+      axis.line = element_line(color = "black", linewidth = 0.8),
+      plot.title = element_text(size = 16, colour = "black", hjust = 0.5)
+      )
+ggsave(paste0(OUTDIR,"/tss/tss_methylation_test_new_oref_.png"), plot = p, width = 6, height = 3)
+
+
+```
+
+# 2.3 CpG coverage 
+```{r}
+library(data.table)
+library(stringr)
+library(Matrix)
+library(dplyr)
+library(tidyverse)
+library(dendextend)
+library(ComplexHeatmap)
+library(grid)
+dir.input.all <- "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/bismark/SE/nondirectional/CPG_GPC"
+OUTDIR='/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/analysis/thesis/'
+
+#WGA-BS prep
+cpg_files <- list.files(dir.input.all, pattern = ".*BS.*\\.CpG_report\\.txt$", full.names = TRUE)
+
+process_file <- function(file, context) {
+  sample_name <- sub("^(.*_BS).*", "\\1", basename(file))  
+  dat <- fread(file, sep="\t", header=FALSE, select=c(1,2,3,4,5))
+  setnames(dat, c("chr", "pos", "strand", "met_reads", "nonmet_reads"))
+  dat[, sample := sample_name]  
+  setkey(dat, chr, pos)
+  return(dat)
+}
+
+# Process bismark files
+cpg_data <- rbindlist(lapply(cpg_files, process_file, context="CpG"))
+
+#CpG
+# Create a unique identifier for each CpG site
+cpg_data$site <- paste(cpg_data$chr, cpg_data$pos, sep="_")
+
+cpg_data_h<-cpg_data[cpg_data$chr %in% c(paste0("chr", 1:22), "chrX"), ]
+cpg_NA <- cpg_data_h[grepl("NA12878", cpg_data_h$sample), ]
+cpg_OC <- cpg_data_h[grepl("OCUB-F", cpg_data_h$sample), ]
+
+NA_site<-unique(cpg_NA$site)
+OC_site<-unique(cpg_OC$site)
+shared_site <- intersect(NA_site, OC_site)
+
+cpg_filtered_s <- cpg_data_h[cpg_data_h$site %in% shared_site, ]
+
+#compared to gold standard
+dir.input.gold <- "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/OCUBF_R/bismark/SE/nondirectional/CPG_GPC"
+
+cpg_filesRI <- list.files(dir.input.gold, pattern = "\\.CpG_report\\.txt$", full.names = TRUE)
+
+process_file_oc <- function(file, context) {
+  sample_name <- "OCUB-F reference"
+  dat <- fread(file, sep="\t", header=FALSE, select=c(1,2,3,4,5))
+  setnames(dat, c("chr", "pos", "strand", "met_reads", "nonmet_reads"))
+  dat[, sample := sample_name]  
+  setkey(dat, chr, pos)
+  return(dat)
+}
+# Process bismark files
+cpg_data_gold <- rbindlist(lapply(cpg_filesRI, process_file_oc, context="CpG"))
+
+# Create a unique identifier for each CpG site
+cpg_data_gold$site <- paste(cpg_data_gold$chr, cpg_data_gold$pos, sep="_")
+
+cpg_data_gold<-cpg_data_gold[cpg_data_gold$chr %in% c(paste0("chr", 1:22), "chrX"), ]
+
+ours_site<-unique(cpg_filtered_s$site)
+OC_site<-unique(cpg_data_gold$site)
+shared_site <- intersect(ours_site, OC_site)
+
+cpg_compare <- rbind(cpg_filtered_s, cpg_data_gold)
+
+cpg_filtered_compare <- cpg_compare[cpg_compare$site %in% shared_site, ]
+cpg_filtered_compare$sample<-gsub("_Pool_","-",cpg_filtered_compare$sample)
+cpg_filtered_compare$sample<-gsub("_BS","",cpg_filtered_compare$sample)
+
+sample_levels <- sort(unique(cpg_filtered_compare$sample))  
+site_levels <- sort(unique(cpg_filtered_compare$site))
+
+# Use those levels to fix the matrix row/column assignment
+cpg_matrix_compare <- sparseMatrix(
+  i = as.integer(factor(cpg_filtered_compare$sample, levels = sample_levels)),
+  j = as.integer(factor(cpg_filtered_compare$site, levels = site_levels)),
+  x = 1,
+  dimnames = list(sample_levels, site_levels)
+)
+
+cpg_dense_compare <- as.matrix(cpg_matrix_compare)
+
+#heatmap
+chromosomes <- unique(sub("_.*", "", colnames(cpg_dense_compare))) 
+chrom_order <- c(paste0("chr", 1:22), "chrX")
+
+chromosomes <- factor(chromosomes, levels = chrom_order)
+chrom_matrices_comp <- list()
+
+for (chrom in chromosomes) {
+  chrom_columns <- grep(paste0("^", chrom, "_"), colnames(cpg_dense_compare), value = TRUE)
+  numeric_values <- as.numeric(sub(paste0(chrom, "_"), "", chrom_columns))
+  ordered_columns <- chrom_columns[order(numeric_values)]
+  cpg_dense_subset <- cpg_dense_compare[, ordered_columns, drop = FALSE]
+  chrom_matrices_comp[[chrom]] <- cpg_dense_subset
+}
+
+# Combine all chromosomes into a single matrix (rows: CpG sites, columns: Samples)
+cpg_dense_combined_compare <- do.call(cbind, chrom_matrices_comp)
+
+# Compute hierarchical clustering for samples (columns)
+row_dist <- dist(cpg_dense_combined_compare, method = "binary")
+row_hc <- hclust(row_dist, method = "ward.D2")
+
+
+```
+
+# Coverage plot change
+```{r}
+#orientation for poster (coloured labels)
+# grouping samples (after transpose)
+samples <- colnames(t(cpg_dense_combined_compare))
+sample_groups <- ifelse(
+  samples == "OCUB-F reference", 
+  "OCUB-F reference", 
+  sub("-.*$", "", samples)
+)
+
+# Assign colors to each group
+group_colors <- c(
+  "OCUB-F reference" = "gold",
+  "EQUT" = "red",
+  "NEB5X1" = "blue",
+  "NEB5X2" = "darkgreen",
+  "EpiMark" = "black"
+)
+
+label_colors <- group_colors[sample_groups]
+names(label_colors) <- samples  # ensure names align with sample order
+output_file <- paste0(OUTDIR, "/comp_chrom_cpg_heatmap_poster.png")
+png(output_file, width = 2800, height = 2000,res = 300)
+ht <- Heatmap(
+  t(cpg_dense_combined_compare),
+  name = "CpG Coverage",
+  show_row_names = FALSE,
+  show_column_names = TRUE,
+  column_title = "Samples",
+  row_title = paste0("CpG Sites", "\n","across chromosomes"),
+  row_title_gp = gpar(fontsize =16),
+  cluster_rows = FALSE,
+  cluster_columns = as.dendrogram(row_hc),
+  column_title_gp = gpar(fontsize =16),
+  column_names_gp = gpar(fontsize = 14, col = label_colors),  # colored labels 
+  col = c("0" = "#5E3C99", "1" = "#E66101"),
+  heatmap_width = unit(18, "cm"),
+  heatmap_height = unit(12, "cm"),
+  heatmap_legend_param = list(
+    title_gp = gpar(fontsize = 14),
+    labels_gp = gpar(fontsize = 14),
+    title = "CpG sites covered", 
+    labels = c("absent", "present"),
+    nrow = 1,
+    at = c("0", "1")
+  )
+)
+draw(ht,heatmap_legend_side = "bottom", column_dend_side = "top")
+dev.off()
+```
+
+# 2.4 copy number calling
+```{r}
+library(QDNAseq)
+library(QDNAseq.hg38)
+bins <- getBinAnnotations(binSize=50, genome="hg38")
+OUTDIR="/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/analysis/thesis"
+
+#wga
+readCounts <- binReadCounts(bins, path="/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/bismark/SE/nondirectional/deduplication/human")
+future::plan("multisession")
+readCountsFiltered <- applyFilters(readCounts, residual=TRUE, blacklist=TRUE)
+readCountsFiltered <- estimateCorrection(readCountsFiltered)
+
+copyNumbers <- correctBins(readCountsFiltered)
+copyNumbersNormalized <- normalizeBins(copyNumbers)
+copyNumbersSmooth <- smoothOutlierBins(copyNumbersNormalized)
+
+copyNumbersSegmented <- segmentBins(copyNumbersSmooth, transformFun="sqrt")
+copyNumbersSegmented <- normalizeSegmentedBins(copyNumbersSegmented)
+
+save(copyNumbersSegmented, file = paste0(OUTDIR, "/segmented_copynumber_WGA.RData"))
+
+#OCUB-F
+readCounts_c <- binReadCounts(bins, path="/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/OCUBF_R/bismark/SE/nondirectional/deduplication")
+readCountsFiltered_c <- applyFilters(readCounts_c, residual=TRUE, blacklist=TRUE)
+readCountsFiltered_c <- estimateCorrection(readCountsFiltered_c)
+copyNumbers_c <- correctBins(readCountsFiltered_c)
+copyNumbersNormalized_c <- normalizeBins(copyNumbers_c)
+copyNumbersSmooth_c <- smoothOutlierBins(copyNumbersNormalized_c)
+copyNumbersSegmented_c <- segmentBins(copyNumbersSmooth_c, transformFun="sqrt")
+copyNumbersSegmented_c <- normalizeSegmentedBins(copyNumbersSegmented_c)
+sampleNames(copyNumbersSegmented_c)<- "OCUB-F reference"
+save(copyNumbersSegmented_c, file = paste0(OUTDIR, "/segmented_copynumber_OCUB_F.RData"))
+
+#nWGA
+readCounts <- binReadCounts(bins, path="/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/sin_WGA/bismark/SE/nondirectional/deduplication")
+future::plan("multisession")
+readCountsFiltered <- applyFilters(readCounts, residual=TRUE, blacklist=TRUE)
+readCountsFiltered <- estimateCorrection(readCountsFiltered)
+copyNumbers <- correctBins(readCountsFiltered)
+copyNumbersNormalized <- normalizeBins(copyNumbers)
+copyNumbersSmooth <- smoothOutlierBins(copyNumbersNormalized)
+copyNumbersSegmented_nw <- segmentBins(copyNumbersSmooth, transformFun="sqrt")
+copyNumbersSegmented_nw <- normalizeSegmentedBins(copyNumbersSegmented_nw)
+save(copyNumbersSegmented_nw, file = paste0(OUTDIR, "/segmented_copynumber_nWGA.RData"))
+```
+
+# 2.4 save copy number plots
+```{r}
+for (sample_name in sampleNames(copyNumbersSegmented_nwgaem)) {
+  sample_data <- copyNumbersSegmented_nwgaem[,sample_name]
+  png(paste0(OUTDIR,"/cn_plots/nwga_copy_number_plot_", sample_name, ".png"))
+  plot(sample_data, main = sample_name)
+  dev.off()
+}
+for (sample_name in sampleNames(copyNumbersSegmented_nwgabs)) {
+  sample_data <- copyNumbersSegmented_nwgabs[,sample_name]
+  png(paste0(OUTDIR,"/cn_plots/nwga_copy_number_plot_", sample_name, ".png"))
+  plot(sample_data, main = sample_name)
+  dev.off()
+}
+for (sample_name in sampleNames(copyNumbersSegmented_wgabs)) {
+  sample_data <- copyNumbersSegmented_wgabs[,sample_name]
+    png(paste0(OUTDIR,"/cn_plots/wga_copy_number_plot_", sample_name, ".png"))
+  plot(sample_data, main = sample_name)
+  dev.off()
+}
+for (sample_name in sampleNames(copyNumbersSegmented_wgaem)) {
+  sample_data <- copyNumbersSegmented_wgaem[,sample_name]
+    png(paste0(OUTDIR,"/cn_plots/wga_copy_number_plot_", sample_name, ".png"))
+  plot(sample_data, main = sample_name)
+  dev.off()
+}
+png(paste0(OUTDIR,"/cn_plots/control_copy_number_plot.png"))
+plot(copyNumbersSegmented_c)
+dev.off()
+```
+
+# 2.5 copy number calling (new version with all libraries separate for easier downstream access, doesn't affect the individual sample level GC bias correction)
+```{r}
+library(QDNAseq)
+library(QDNAseq.hg38)
+bins <- getBinAnnotations(binSize=100, genome="hg38")
+OUTDIR="/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/analysis/thesis"
+
+#wga-bs
+path="/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/bismark/SE/nondirectional/deduplication/human"
+bs_files <- list.files(path, pattern = ".*BS.*$", full.names = TRUE)
+
+readCounts <- binReadCounts(bins, bamfiles = bs_files)
+future::plan("multisession")
+readCountsFiltered <- applyFilters(readCounts, residual=TRUE, blacklist=TRUE)
+readCountsFiltered <- estimateCorrection(readCountsFiltered)
+
+copyNumbers <- correctBins(readCountsFiltered)
+copyNumbersNormalized <- normalizeBins(copyNumbers)
+copyNumbersSmooth <- smoothOutlierBins(copyNumbersNormalized)
+
+copyNumbersSegmented_wgabs <- segmentBins(copyNumbersSmooth, transformFun="sqrt")
+copyNumbersSegmented_wgabs <- normalizeSegmentedBins(copyNumbersSegmented_wgabs)
+
+sampleNames(copyNumbersSegmented_wgabs)<-gsub("(_BS).*", "\\1",sampleNames(copyNumbersSegmented_wgabs))
+sampleNames(copyNumbersSegmented_wgabs)<-gsub("_Pool_","-",sampleNames(copyNumbersSegmented_wgabs))
+save(copyNumbersSegmented_wgabs, file = paste0(OUTDIR, "/segmented_copynumber_WGABS.RData"))
+
+#wga-em
+path="/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/bismark/SE/nondirectional/deduplication/human"
+em_files <- list.files(path, pattern = ".*EM.*$", full.names = TRUE)
+
+readCounts_em <- binReadCounts(bins, bamfiles = em_files)
+future::plan("multisession")
+readCountsFiltered_em <- applyFilters(readCounts_em, residual=TRUE, blacklist=TRUE)
+readCountsFiltered_em <- estimateCorrection(readCountsFiltered_em)
+
+copyNumbers_em <- correctBins(readCountsFiltered_em)
+copyNumbersNormalized_em <- normalizeBins(copyNumbers_em)
+copyNumbersSmooth_em <- smoothOutlierBins(copyNumbersNormalized_em)
+
+copyNumbersSegmented_wgaem <- segmentBins(copyNumbersSmooth_em, transformFun="sqrt")
+copyNumbersSegmented_wgaem <- normalizeSegmentedBins(copyNumbersSegmented_wgaem)
+
+sampleNames(copyNumbersSegmented_wgaem)<-gsub("(_EM).*", "\\1",sampleNames(copyNumbersSegmented_wgaem))
+sampleNames(copyNumbersSegmented_wgaem)<-gsub("_Pool_","-",sampleNames(copyNumbersSegmented_wgaem))
+save(copyNumbersSegmented_wgaem, file = paste0(OUTDIR, "/segmented_copynumber_WGAEM.RData"))
+
+#OCUB-F
+readCounts_c <- binReadCounts(bins, path="/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/OCUBF_R/bismark/SE/nondirectional/deduplication")
+readCountsFiltered_c <- applyFilters(readCounts_c, residual=TRUE, blacklist=TRUE)
+readCountsFiltered_c <- estimateCorrection(readCountsFiltered_c)
+copyNumbers_c <- correctBins(readCountsFiltered_c)
+copyNumbersNormalized_c <- normalizeBins(copyNumbers_c)
+copyNumbersSmooth_c <- smoothOutlierBins(copyNumbersNormalized_c)
+copyNumbersSegmented_c <- segmentBins(copyNumbersSmooth_c, transformFun="sqrt")
+copyNumbersSegmented_c <- normalizeSegmentedBins(copyNumbersSegmented_c)
+sampleNames(copyNumbersSegmented_c) <- "OCUB-F reference"
+save(copyNumbersSegmented_c, file = paste0(OUTDIR, "/segmented_copynumber_OCUB_F.RData"))
+
+#nWGA
+path="/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/sin_WGA/bismark/SE/nondirectional/deduplication"
+bs_files <- list.files(path, pattern = ".*BS.*.bam$", full.names = TRUE)
+readCounts <- binReadCounts(bins, bamfiles = bs_files)
+future::plan("multisession")
+readCountsFiltered <- applyFilters(readCounts, residual=TRUE, blacklist=TRUE)
+readCountsFiltered <- estimateCorrection(readCountsFiltered)
+
+copyNumbers <- correctBins(readCountsFiltered)
+copyNumbersNormalized <- normalizeBins(copyNumbers)
+copyNumbersSmooth <- smoothOutlierBins(copyNumbersNormalized)
+
+copyNumbersSegmented_nwgabs <- segmentBins(copyNumbersSmooth, transformFun="sqrt")
+copyNumbersSegmented_nwgabs <- normalizeSegmentedBins(copyNumbersSegmented_nwgabs)
+
+sampleNames(copyNumbersSegmented_nwgabs)<-gsub("_dedup.merged","",sampleNames(copyNumbersSegmented_nwgabs))
+sampleNames(copyNumbersSegmented_nwgabs)<-gsub("_","-",sampleNames(copyNumbersSegmented_nwgabs))
+save(copyNumbersSegmented_nwgabs, file = paste0(OUTDIR, "/segmented_copynumber_nWGABS.RData"))
+
+em_files <- list.files(path, pattern = ".*EM.*.bam$", full.names = TRUE)
+readCounts <- binReadCounts(bins, bamfiles = em_files)
+future::plan("multisession")
+readCountsFiltered <- applyFilters(readCounts, residual=TRUE, blacklist=TRUE)
+readCountsFiltered <- estimateCorrection(readCountsFiltered)
+
+copyNumbers <- correctBins(readCountsFiltered)
+copyNumbersNormalized <- normalizeBins(copyNumbers)
+copyNumbersSmooth <- smoothOutlierBins(copyNumbersNormalized)
+
+copyNumbersSegmented_nwgaem <- segmentBins(copyNumbersSmooth, transformFun="sqrt")
+copyNumbersSegmented_nwgaem <- normalizeSegmentedBins(copyNumbersSegmented_nwgaem)
+
+sampleNames(copyNumbersSegmented_nwgaem)<-gsub("_dedup.merged","",sampleNames(copyNumbersSegmented_nwgaem))
+sampleNames(copyNumbersSegmented_nwgaem)<-gsub("_","-",sampleNames(copyNumbersSegmented_nwgaem))
+save(copyNumbersSegmented_nwgaem, file = paste0(OUTDIR, "/segmented_copynumber_nWGAEM.RData"))
+
+```
+
+# segmentation for cell line specific data 
+```{r}
+library(QDNAseq)
+library(QDNAseq.hg38)
+library(Biobase)
+bins <- getBinAnnotations(binSize=100, genome="hg38")
+OUTDIR="/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/analysis/thesis"
+
+#ocub-fs for comparison
+path="/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/bismark/SE/nondirectional/deduplication/human"
+bs_files <- list.files(path, pattern = ".*OCUB-F.*BS.*$", full.names = TRUE)
+ref_path="/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/OCUBF_R/bismark/SE/nondirectional/deduplication/SLX-22584.H12.227KFHLT4.s_5_dedup.merged.bam"
+ocubfs<-c(bs_files,ref_path)
+readCounts <- binReadCounts(bins, bamfiles = ocubfs)
+future::plan("multisession")
+readCountsFiltered <- applyFilters(readCounts, residual=TRUE, blacklist=TRUE)
+readCountsFiltered <- estimateCorrection(readCountsFiltered)
+
+copyNumbers <- correctBins(readCountsFiltered)
+copyNumbersNormalized <- normalizeBins(copyNumbers)
+copyNumbersSmooth <- smoothOutlierBins(copyNumbersNormalized)
+
+copyNumbersSegmented_ocubfs <- segmentBins(copyNumbersSmooth, transformFun="sqrt")
+copyNumbersSegmented_ocubfs <- normalizeSegmentedBins(copyNumbersSegmented_ocubfs)
+
+sampleNames(copyNumbersSegmented_ocubfs)<-gsub("(_BS).*", "\\1",sampleNames(copyNumbersSegmented_ocubfs))
+sampleNames(copyNumbersSegmented_ocubfs)<-gsub("_Pool_","-",sampleNames(copyNumbersSegmented_ocubfs))
+sampleNames(copyNumbersSegmented_ocubfs)[13]<-"OCUB-F reference"
+
+
+#visualisation
+copyNumbersCalled <- callBins(copyNumbersSegmented_ocubfs)
+
+png(paste0(OUTDIR,"/wgabs-ocubf_frequency plot.png"))
+frequencyPlot(copyNumbersCalled)
+dev.off()
+
+exportBins(copyNumbersCalled,paste0(OUTDIR,"/all-ocubf_call.tsv"), format= "tsv",type = "calls")
+exportBins(copyNumbersCalled,paste0(OUTDIR,"/all-ocubf_seg.tsv"), format= "tsv",type = "segments")
+
+
+for (sample_name in sampleNames(copyNumbersSegmented_ocubfs)) {
+  sample_data <- copyNumbersSegmented_ocubfs[,sample_name]
+    png(paste0(OUTDIR,"/cn_plots100kb/wga_copy_number_plot_", sample_name, ".png"))
+  plot(sample_data, main = sample_name)
+  dev.off()
+}
+
+```
+
+
+# Results 2.6 Copy number noise (for 50kb)
+```{r}
+library(ggplot2)
+library(ggrepel)
+library(viridis)
+#WGA
+load(paste0(OUTDIR, "/segmented_copynumber_WGA.RData"))
+
+#control
+load(paste0(OUTDIR, "/segmented_copynumber_OCUB_F.RData"))
+
+
+sdDiffTrim <- QDNAseq:::sdDiffTrim #this is an internal function in QDNAseq
+copynumber <- assayDataElement(copyNumbersSegmented, "copynumber")
+noise <- apply(copynumber, MARGIN = 2L, FUN = sdDiffTrim, na.rm = TRUE) #this is how observed variance is called in the plots 
+noise
+expected_variance <- pData(copyNumbersSegmented)$expected.variance
+expected_sd <- sqrt(expected_variance)
+wga <- data.frame(
+  sample = names(noise),         #sample names
+  noise = noise,                 #observed_variance
+  expected_sd = expected_sd      #expected standard deviation
+)
+
+copynumber_c <- assayDataElement(copyNumbersSegmented_c, "copynumber")
+noise_c <- apply(copynumber_c, MARGIN = 2L, FUN = sdDiffTrim, na.rm = TRUE)
+expected_variance_c <- pData(copyNumbersSegmented_c)$expected.variance
+expected_sd_c <- sqrt(expected_variance_c)
+ocubf_c <- data.frame(
+  sample = names(noise_c),         
+  noise = noise_c,                 
+  expected_sd = expected_sd_c      
+)
+
+#filter for BS samples
+wga<-wga[grep("BS",wga$sample),]
+ocubf_c$type <- "OCUB-F reference"
+wga$type<-"WGA-BS"
+wga_comp<-rbind(wga,ocubf_c)
+wga_comp$sample<- gsub("_BS.*$", "",wga_comp$sample)
+wga_comp$sample<- gsub("_Pool_","-",wga_comp$sample)
+wga_comp$sample<- gsub("_","-",wga_comp$sample)
+
+wga_comp$WGA_pol <- ifelse(grepl("^EpiMark-", wga_comp$sample), "EpiMark",
+                        ifelse(grepl("^NEB5X1-", wga_comp$sample), "NEB5X1",
+                        ifelse(grepl("^NEB5X2-", wga_comp$sample), "NEB5X2",
+                        ifelse(grepl("^EQUT-", wga_comp$sample), "EQUT", "OCUB-F reference"))))
+
+wga_comp$DNA_pol <- ifelse(grepl("Q5U", wga_comp$sample), "Q5U",
+                        ifelse(grepl("Q5", wga_comp$sample), "Q5",
+                        ifelse(grepl("EQUT", wga_comp$sample), "EQUT", "OCUB-F reference")))
+
+type<-c("OCUB-F reference","EQUT", "EpiMark", "NEB5X1", "NEB5X2")
+magma<-setNames(magma(n = 5, begin = 0.2, end = 0.9), type)
+
+p_scatter <- ggplot(wga_comp, aes(x = noise, y = expected_sd)) +
+  geom_jitter(
+    aes(colour = WGA_pol),
+    size = 2, alpha = 0.9, na.rm = TRUE
+  ) +
+  scale_y_continuous(limits = c(0, 0.75), breaks = seq(0,0.75, 0.25))+
+  scale_x_continuous(limits = c(0, 0.75), breaks = seq(0,0.75, 0.25))+
+  scale_colour_manual(values = magma)+
+  geom_text_repel(
+    aes(label = sample),
+    size = 5,                
+    max.overlaps = 10,       
+    box.padding = 0.2,       
+    point.padding = 0.3
+  ) +
+  # Labels and legends
+  labs(
+    title = "Copy number noise of WGA-BS samples",
+    x = "Observed noise",
+    y = "Expected standard deviation",
+    colour = "WGA Polymerase"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    axis.text.x = element_text(hjust = 0.5, size = 14, color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    axis.title.x = element_text(size = 16, color = "black"),
+    axis.title.y = element_text(size = 16, color = "black"),
+    legend.text = element_text(size = 14, color = "black"), 
+    legend.title = element_text(size = 14, color = "black"),
+    plot.title = element_text(size = 16, color= "black", hjust = 0.5),
+    axis.line = element_line(color = "black", linewidth = 0.8)
+  )
+
+# Save the plot
+ggsave(paste0(OUTDIR,"/scatter_plot_copy_number_noise_axis.png"), p_scatter, width = 10, height = 8)
+
+# Display the plot
+print(p_scatter)
+
+# v2
+wga_comp$noise <- as.numeric(wga_comp$noise)
+wga_comp$expected_sd <- as.numeric(wga_comp$expected_sd)
+
+label_df <- as.data.frame(wga_comp) %>%
+  arrange(noise) %>%
+  dplyr::slice(1:4)
+
+p_scatter <- ggplot(wga_comp, aes(x = noise, y = expected_sd)) +
+  geom_jitter(
+    aes(colour = WGA_pol),
+    size = 5, alpha = 0.9, na.rm = TRUE
+  ) +
+  geom_text_repel(
+    data = label_df,
+    aes(label = sample),  
+    size = 5,
+    max.overlaps = Inf,
+    box.padding = 1.2,
+    segment.size = 0.7,
+    segment.alpha = 0.3,
+    nudge_x = 0.08,
+    nudge_y = 0.005
+    )+
+  scale_y_continuous(limits = c(0, 0.5), breaks = seq(0,0.5, 0.25))+
+  scale_x_continuous(limits = c(0, 0.75), breaks = seq(0,0.75, 0.25))+
+  scale_colour_manual(values = magma)+
+  labs(
+    title = "Copy number noise of WGA-BS samples",
+    x = "Observed noise",
+    y = "Expected standard deviation",
+    colour = "WGA Polymerase"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    axis.text.x = element_text(hjust = 0.5, size = 14, color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    axis.title.x = element_text(size = 16, color = "black"),
+    axis.title.y = element_text(size = 16, color = "black"),
+    legend.text = element_text(size = 14, color = "black"), 
+    legend.title = element_text(size = 14, color = "black"),
+    plot.title = element_text(size = 16, color= "black", hjust = 0.5),
+    axis.line = element_line(color = "black", linewidth = 0.8)
+  )
+# Save the plot
+ggsave(paste0(OUTDIR,"/scatter_plot_copy_number_noise_axis_no_label.png"), p_scatter, width = 8, height = 5)
+
+```
+# 2.6 copy number noise against read depth
+```{r}
+library(ggplot2)
+library(ggrepel)
+library(viridis)
+sdDiffTrim <- QDNAseq:::sdDiffTrim #this is an internal function in QDNAseq
+copynumber <- assayDataElement(copyNumbersSegmented, "copynumber")
+noise <- apply(copynumber, MARGIN = 2L, FUN = sdDiffTrim, na.rm = TRUE) #this is how observed variance is called in the plots 
+expected_variance <- pData(copyNumbersSegmented)$expected.variance
+total_reads<-pData(copyNumbersSegmented)$total.reads
+expected_sd <- sqrt(expected_variance)
+wga <- data.frame(
+  sample = names(noise),         #sample names
+  noise = noise,                 #observed_variance
+  expected_sd = expected_sd,      #expected standard deviation
+  total_reads = total_reads
+)
+copynumber_c <- assayDataElement(copyNumbersSegmented_c, "copynumber")
+noise_c <- apply(copynumber_c, MARGIN = 2L, FUN = sdDiffTrim, na.rm = TRUE)
+expected_variance_c <- pData(copyNumbersSegmented_c)$expected.variance
+expected_sd_c <- sqrt(expected_variance_c)
+total_reads_C<-pData(copyNumbersSegmented_c)$total.reads
+ocubf_c <- data.frame(
+  sample = names(noise_c),         
+  noise = noise_c,                 
+  expected_sd = expected_sd_c,
+  total_reads = total_reads_C
+)
+wga<-wga[grep("BS",wga$sample),]
+ocubf_c$type <- "OCUB-F reference"
+wga$type<-"WGA-BS"
+wga_comp<-rbind(wga,ocubf_c)
+wga_comp$sample<- gsub("_BS.*$", "",wga_comp$sample)
+wga_comp$sample<- gsub("_Pool_","-",wga_comp$sample)
+wga_comp$sample<- gsub("_","-",wga_comp$sample)
+wga_comp$WGA_pol <- ifelse(grepl("^EpiMark-", wga_comp$sample), "EpiMark",
+                        ifelse(grepl("^NEB5X1-", wga_comp$sample), "NEB5X1",
+                        ifelse(grepl("^NEB5X2-", wga_comp$sample), "NEB5X2",
+                        ifelse(grepl("^EQUT-", wga_comp$sample), "EQUT", "OCUB-F reference"))))
+
+wga_comp$DNA_pol <- ifelse(grepl("Q5U", wga_comp$sample), "Q5U",
+                        ifelse(grepl("Q5", wga_comp$sample), "Q5",
+                        ifelse(grepl("EQUT", wga_comp$sample), "EQUT", "OCUB-F reference")))
+
+wga_comp$total_reads<-log10(wga_comp$total_reads)
+
+
+type<-c("OCUB-F reference","EQUT", "EpiMark", "NEB5X1", "NEB5X2")
+magma<-setNames(magma(n = 5, begin = 0.2, end = 0.9), type)
+
+p_scatter <- ggplot(wga_comp, aes(x = total_reads, y = noise)) +
+  geom_jitter(
+    aes(colour = WGA_pol),
+    size = 3, alpha = 0.9, na.rm = TRUE
+  ) +
+  scale_colour_manual(values = magma)+
+  geom_text_repel(
+    aes(label = sample),
+    size = 5,                
+    max.overlaps = 10,       
+    box.padding = 0.2,       
+    point.padding = 0.3
+  ) +
+  # Labels and legends
+  labs(
+    title = "Scatter Plot of Copy Number Noise of WGA-BS samples",
+    x = "Total reads analysed (Log10 transformed)",
+    y = "Observed noise",
+    colour = "WGA Polymerase"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    axis.text.x = element_text(hjust = 0.5, size = 14, color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    axis.title.x = element_text(size = 16, color = "black"),
+    axis.title.y = element_text(size = 16, color = "black"),
+    legend.text = element_text(size = 14, color = "black"), 
+    legend.title = element_text(size = 14, color = "black"),
+    plot.title = element_text(size = 16, color= "black", hjust = 0.5),
+    axis.line = element_line(color = "black", linewidth = 0.8)
+  )
+
+ggsave(paste0(OUTDIR,"/scatter_plot_copy_number_noise_vs_reads.png"), p_scatter, width = 10, height = 8)
+# v2
+wga_comp$noise <- as.numeric(wga_comp$noise)
+wga_comp$total_reads <- as.numeric(wga_comp$total_reads)
+
+label_df <- as.data.frame(wga_comp) %>%
+  arrange(noise) %>%
+  dplyr::slice(1:4)
+p_scatter <- ggplot(wga_comp, aes(x = total_reads, y = noise)) +
+  geom_jitter(
+    aes(colour = WGA_pol),
+    size = 3, alpha = 0.9, na.rm = TRUE
+  ) +
+  scale_colour_manual(values = magma)+
+  geom_text_repel(
+    data = label_df,
+    aes(label = sample),  
+    size = 5,
+    max.overlaps = Inf,
+    box.padding = 1.2,
+    segment.size = 0.7,
+    segment.alpha = 0.3,
+    nudge_x = 0.06,
+    nudge_y = -0.01
+    )+
+  # Labels and legends
+  labs(
+    title = "Copy number noise of WGA-BS samples",
+    x = "Log10 total reads analysed ",
+    y = "Observed noise",
+    colour = "WGA Polymerase"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    axis.text.x = element_text(hjust = 0.5, size = 14, color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    axis.title.x = element_text(size = 16, color = "black"),
+    axis.title.y = element_text(size = 16, color = "black"),
+    legend.text = element_text(size = 14, color = "black"), 
+    legend.title = element_text(size = 14, color = "black"),
+    plot.title = element_text(size = 16, color= "black", hjust = 0.5),
+    axis.line = element_line(color = "black", linewidth = 0.8)
+  )
+
+ggsave(paste0(OUTDIR,"/scatter_plot_copy_number_noise_vs_reads.png"), p_scatter, width = 8, height = 5)
+```
+
+# Result 2.7 Argeement ratio (100kb)
+```{r}
+library(GenomicRanges)
+library(dplyr)
+library(data.table)
+wga_bs <- read.table(paste0(OUTDIR, "/all-ocubf_call.tsv"), header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+wga_bs$feature<-NULL
+cyto <- read.table(
+  "/data/scratch/DBC/UBCN/CANCDYN/genomes/homo-sapiens/hg38/methyl_external/cytoBand.txt.gz",
+  col.names = c("chrom", "start", "end", "name", "gieStain"),
+  fill = TRUE,
+  sep = "\t",
+  stringsAsFactors = FALSE
+)
+cyto<-cyto[cyto$chrom %in% paste0("chr", c(1:22)), ]
+cyto$arm <- substr(cyto$name, 1, 1) 
+
+long_df <- wga_bs %>%
+  pivot_longer(
+    cols = -c(chromosome, start, end,OCUB.F.reference),
+    names_to = "sample",
+    values_to = "call"
+  )
+
+kappdf <- long_df%>%
+  mutate(
+    call = ifelse(call >= 1, "gain", ifelse(call <= -1, "loss","neutral")),
+    OCUB.F.reference = ifelse(OCUB.F.reference >= 1, "gain", ifelse(OCUB.F.reference <= -1, "loss","neutral"))
+    )
+
+
+gr_cyto <- GRanges(
+  seqnames = cyto$chrom,
+  ranges = IRanges(start = cyto$start + 1, end = cyto$end),
+  arm = cyto$arm,
+  name = cyto$name
+)
+
+gr_ref <- GRanges(
+  seqnames = paste0("chr", kappdf$chromosome),
+  ranges = IRanges(start = kappdf$start, end = kappdf$end)
+)
+
+hits_cyto <- findOverlaps(gr_ref, gr_cyto)
+
+# Extract arm info
+arm_info <- data.table(
+  chromosome = as.integer(gsub("chr", "", as.character(seqnames(gr_ref[queryHits(hits_cyto)])))),
+  start = start(gr_ref[queryHits(hits_cyto)]),
+  end = end(gr_ref[queryHits(hits_cyto)]),
+  arm = mcols(gr_cyto)$arm[subjectHits(hits_cyto)],
+  name = mcols(gr_cyto)$name[subjectHits(hits_cyto)]
+)
+
+arm_wga<-left_join(arm_info,kappdf, by=c("chromosome","start","end"))
+
+agreement <- arm_wga %>%
+  group_by(sample, chromosome, arm) %>%
+  summarize(
+    agreement = round(mean(call == OCUB.F.reference), 2),
+    .groups = "drop"
+  ) 
+
+agreement$chrarm<-paste0(agreement$chromosome, "\n", agreement$arm)
+agreement$sample<-gsub(".OCUB.*","",agreement$sample)
+agreement$sample<-gsub("[.]","-",agreement$sample)
+
+chrarm_levels <- agreement %>%
+  distinct(chromosome, arm) %>%
+  mutate(
+    chromosome = as.numeric(as.character(chromosome)),
+    arm = factor(arm, levels = c("p", "q"))
+  ) %>%
+  arrange(chromosome, arm) %>%
+  mutate(chrarm = paste0(chromosome,"\n",arm)) %>%
+  pull(chrarm)
+
+agreement$chrarm <- factor(agreement$chrarm, levels = chrarm_levels)
+
+p<-ggplot(agreement, aes(x = chrarm, y = sample, fill = agreement)) +
+  geom_tile(color = "black") +
+  scale_fill_viridis_c(
+    alpha = 1,
+    begin = 0.1,
+    end = 0.66,
+    option = "plasma") +
+  geom_text(aes(label =   agreement),
+            color = "white", size = 5) +
+  labs(
+    title = "Agreement per arm", 
+    x = "Chromosome", 
+    y = "Sample",
+    fill = "Agreement ratio")+
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    axis.text.x = element_text(hjust = 0.5, size = 14, color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    axis.title.x = element_text(size = 16, color = "black"),
+    axis.title.y = element_text(size = 16, color = "black"),
+    legend.text = element_text(size = 14, color = "black"), 
+    legend.title = element_text(size = 14, color = "black"),
+    plot.title = element_text(size = 16, color= "black", hjust = 0.5),
+    legend.margin = margin(t = -5, unit = "pt")
+  )+
+  guides(fill = guide_colorbar(
+    title.position = "top",
+    barwidth = 20,  
+    barheight = 0.8 
+  ))
+ggsave(paste0(OUTDIR,"/copy_number_agreement.png"), p, width = 20, height = 5)
+
+# chr17.q COAMP
+chr17Q<- arm_wga %>%
+  filter(
+    chromosome == "17",
+    arm == "q"
+  )
+
+# global agreement
+agreement <- arm_wga %>%
+  group_by(sample) %>%
+  summarize(
+    agreement = round(mean(call == OCUB.F.reference), 2),
+    .groups = "drop"
+  ) 
+
+
+agreement$sample<-gsub(".OCUB.*","",agreement$sample)
+agreement$sample<-gsub("[.]","-",agreement$sample)
+agreement$lib<-gsub("-.*", "", agreement$sample)
+agreement$pol<-gsub("^.*-", "", agreement$sample)
+
+p_bar <- ggplot(agreement, aes(x = lib, y = agreement, fill = pol)) +
+  geom_bar(
+    stat = "identity", 
+    position = position_dodge(), 
+    alpha = 0.8) +
+  scale_fill_manual(values = c("#F1605DFF", "#3B0F70FF", "#FECE91FF"), name = "Library polymerase used") +
+  scale_y_continuous(breaks = seq(0.5, 1, 0.1))+
+  coord_cartesian(ylim = c(0.5, 1)) +
+  labs(
+    x = "WGA polymerase",
+    y = "Agreement ratio",
+    title = paste0("Global CN agreement","\n", "WGA-BS vs OCUB-F reference")
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text( hjust = 0.5, size = 14,  colour = "black"),
+    legend.position = "bottom",
+    axis.text.y = element_text(angle = 0, hjust = 1,size=14, colour = "black"),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    legend.text = element_text(size = 14, colour = "black"), 
+    legend.title = element_text(size = 14, colour = "black"),
+    axis.title.x = element_text(size=16,colour = "black"),
+    axis.title.y = element_text(size=16,colour = "black"),
+    plot.title = element_text(size = 16, colour = "black", hjust = 0.5),
+    axis.line = element_line(color = "black", linewidth = 0.8)
+  )+
+  guides(fill = guide_legend(nrow = 2, byrow = TRUE))
+ggsave(paste0(OUTDIR,"/copy_number_agreement_global.png"), p_bar, width = 5, height = 5)
+
+
+```
+
+# 2.8 correlation with OCUB-F reference (100kb)
+```{r}
+wga_bs <- read.table(paste0(OUTDIR, "/all-ocubf_seg.tsv"), header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+wga_bs$feature<-NULL
+long_df <- wga_bs %>%
+  pivot_longer(
+    cols = -c(chromosome, start, end,OCUB.F.reference),
+    names_to = "sample",
+    values_to = "segment"
+  )
+long_df$sample<-gsub("[.]","-",long_df$sample)
+long_df$sample<-gsub("_BS","",long_df$sample)
+
+long_df$lib<-sub("-.*", "", long_df$sample)
+
+librar <- unique(long_df$lib)
+
+all_cor_stats <- list()
+for (rar in librar) {
+  lib_data <- long_df[which(long_df$lib == rar),]
+
+  cor_stats <- lib_data %>%
+    group_by(sample) %>%
+    summarize(
+      cor = cor(OCUB.F.reference, segment, use = "complete.obs"),
+      p = cor.test(OCUB.F.reference, segment)$p.value,
+      .groups = "drop"
+    ) %>%
+    mutate(lib = rar)
+
+  all_cor_stats[[rar]] <- cor_stats
+}
+
+# Combine into a single data frame
+combined_cor_stats <- bind_rows(all_cor_stats)
+
+# Global BH adjustment
+combined_cor_stats <- combined_cor_stats %>%
+  mutate(p_adj = p.adjust(p, method = "BH"),
+         label = paste0("R = ", round(cor, 3), "\np.adjust = ", format.pval(p_adj, digits = 2, scientific = TRUE)))
+
+for (rar in librar) {
+  lib_data <- long_df[which(long_df$lib == rar),]
+  cor_stats <- combined_cor_stats %>% filter(lib == rar)
+
+  plot_data <- left_join(lib_data, cor_stats, by = "sample")
+  # Plot
+  p <- ggplot(plot_data, aes(x = OCUB.F.reference, y = segment)) +
+    geom_point(alpha = 0.5, size = 0.8, color = "blue") +
+    geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed") +
+    geom_text(
+      data = cor_stats,
+      aes(x = -1.5, y = 2, label = label),
+      inherit.aes = FALSE,
+      hjust = 0.5,
+      size = 5,
+      color = "black"
+    ) +
+    facet_wrap(~ sample, nrow = 1) +
+    scale_x_continuous(limits = c(-3, 3)) +
+    scale_y_continuous(limits = c(-3, 3)) +
+    labs(
+      title = paste("Segment Calls: OCUB-F-reference vs", rar),
+      x = "OCUB-F-reference",
+      y = "Sample"
+    ) +
+    theme_minimal() +
+    theme(
+      panel.spacing = unit(0.8, "cm"),
+      legend.position = "right",
+      axis.text.x = element_text( hjust = 0.5, size = 14,  colour = "black"),
+      axis.text.y = element_text(angle = 0, hjust = 1,size=14, colour = "black"),
+      strip.text.y = element_text(size = 16,  lineheight = 1.2,  colour = "black", angle = -90),  
+      strip.text.x = element_text(size = 16, lineheight = 1.2, angle= 0, colour = "black"),
+      panel.grid.minor.y = element_blank(),
+      panel.grid.minor.x = element_blank(),    
+      legend.text = element_text(size = 14, colour = "black"), 
+      legend.title = element_text(size = 14, colour = "black"),
+      axis.title.x = element_text(size=16,colour = "black"),
+      axis.title.y = element_text(size=16,colour = "black"),
+      axis.line = element_line(color = "black", linewidth = 0.8),
+      plot.title = element_text(size = 16, colour = "black", hjust = 0.5)
+    )
+  print(p)
+  ggsave(paste0(OUTDIR,"/COR_with_ref_",rar,".png"),width = 10, height = 4)
+}
+```
+
+# Result 2.9 Identifying co-amplified genes
+```{r}
+wga_bs <- read.table(paste0(OUTDIR, "/all-ocubf_call.tsv"), header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+wga_bs$feature<-NULL
+cyto <- read.table(
+  "/data/scratch/DBC/UBCN/CANCDYN/genomes/homo-sapiens/hg38/methyl_external/cytoBand.txt.gz",
+  col.names = c("chrom", "start", "end", "name", "gieStain"),
+  fill = TRUE,
+  sep = "\t",
+  stringsAsFactors = FALSE
+)
+cyto<-cyto[cyto$chrom %in% paste0("chr", c(1:22)), ]
+cyto$arm <- substr(cyto$name, 1, 1) 
+
+library(dplyr)
+
+long_df <- wga_bs %>%
+  pivot_longer(
+    cols = -c(chromosome, start, end),
+    names_to = "sample",
+    values_to = "call"
+  )
+
+kappdf <- long_df%>%
+  mutate(
+    call = ifelse(call >= 1, "gain", ifelse(call <= -1, "loss","neutral")),
+    )
+
+gr_cyto <- GRanges(
+  seqnames = cyto$chrom,
+  ranges = IRanges(start = cyto$start + 1, end = cyto$end),
+  arm = cyto$arm,
+  name = cyto$name
+)
+
+gr_ref <- GRanges(
+  seqnames = paste0("chr", kappdf$chromosome),
+  ranges = IRanges(start = kappdf$start, end = kappdf$end)
+)
+
+hits_cyto <- findOverlaps(gr_ref, gr_cyto)
+
+# Extract arm info
+arm_info <- data.table(
+  chromosome = as.integer(gsub("chr", "", as.character(seqnames(gr_ref[queryHits(hits_cyto)])))),
+  start = start(gr_ref[queryHits(hits_cyto)]),
+  end = end(gr_ref[queryHits(hits_cyto)]),
+  arm = mcols(gr_cyto)$arm[subjectHits(hits_cyto)],
+  name = mcols(gr_cyto)$name[subjectHits(hits_cyto)]
+)
+arm_info <- arm_info %>% distinct(chromosome, start, end, arm,name, .keep_all = TRUE)
+
+arm_wga<-left_join(arm_info,kappdf, by=c("chromosome","start","end"))
+arm_wga$lib<-gsub("[.].*","",arm_wga$sample)
+chr17<-arm_wga %>%
+  filter(chromosome == "17",
+         lib == "EQUT")
+
+
+library(rtracklayer)
+gtf <- import("/data/scratch/DBC/UBCN/CANCDYN/genomes/homo-sapiens/hg38/gtf/Homo_sapiens.GRCh38.112.chr_patch_hapl_scaff.gtf")
+
+genes <- gtf[gtf$type == "gene"]
+gr_bins <- GRanges(
+  seqnames = chr17$chromosome,
+  ranges = IRanges(start = chr17$start, end = chr17$end)
+)
+
+gene_hits <- findOverlaps(gr_bins, genes)
+
+annotated_df <- data.frame(
+  gene = mcols(genes[subjectHits(gene_hits)])$gene_name,
+  gene_start = start(genes[subjectHits(gene_hits)]),
+  gene_end = end(genes[subjectHits(gene_hits)]),
+  chromosome = seqnames(gr_bins[queryHits(gene_hits)]),
+  start = start(gr_bins[queryHits(gene_hits)]),
+  end = end(gr_bins[queryHits(gene_hits)])
+)
+annotated_df$chromosome <- as.character(annotated_df$chromosome)
+annotated_df <- annotated_df %>% distinct(chromosome, start, end, gene, .keep_all = TRUE)
+chr17$chromosome <- as.character(chr17$chromosome)
+
+final_df <- left_join(annotated_df, chr17, by = c("chromosome", "start", "end"))
+final_df<-final_df[!is.na(final_df$gene),]
+
+erbb2_bins<- final_df %>%
+  filter(gene == "ERBB2") %>%
+  dplyr::select(start, end)
+
+start_window <- min(erbb2_bins$start) - 3e6
+end_window <- max(erbb2_bins$end) + 3e6
+neighbour_erbb2_genes <- final_df[
+  final_df$start >= start_window & 
+  final_df$end <= end_window,
+]
+
+coamp<- neighbour_erbb2_genes[which(neighbour_erbb2_genes$call == "gain"),]
+
+write.csv(coamp, paste0(OUTDIR,"/co_amplified_with_HER2.csv"), row.names = FALSE) 
+```
+
+# Result 3.1 Genomic region proportion analysis
+```{r}
+library(ChIPseeker)
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+library(org.Hs.eg.db)
+library(clusterProfiler)
+library(UpSetR)
+library(enrichplot)
+library(dplyr)
+library(gridExtra)
+library(data.table)
+library(tidyverse)
+OUTDIR="/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/analysis/thesis"
+dir.input.all <- "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/bismark/SE/nondirectional/CPG_GPC"
+
+cov_files_cpg <- list.files(dir.input.all, pattern = ".*EQUT_Pool.*OCUB-F_BS.*\\.CpG\\.cov$", full.names = TRUE)
+cov_files_gpc <- list.files(dir.input.all, pattern = ".*EQUT_Pool.*OCUB-F_BS.*\\.GpC\\.cov$", full.names = TRUE)
+txDb<-TxDb.Hsapiens.UCSC.hg38.knownGene
+#load file function
+load_coverage <- function(file_path) {
+  cov_data <- data.frame(fread(file_path), stringsAsFactors = FALSE)
+  colnames(cov_data) <- c("chrom", "start", "end", "methylation_percentage", "count_methylated", "count_unmethylated")
+  cov_data$coverage = cov_data$count_methylated + cov_data$count_unmethylated
+  cov_data<- cov_data[cov_data$coverage >= 3,]
+  cov_data <- cov_data[cov_data$chrom %in% paste0("chr", c(1:22, "X")), ]
+  return(cov_data)
+}
+
+gpc_list <- lapply(cov_files_gpc, function(file) {
+  gpc <- load_coverage(file)
+  gpc$sample <- sapply(strsplit(basename(file), "_dedup"), "[", 1)
+  gr <- makeGRangesFromDataFrame(gpc,
+                                  seqnames.field = "chrom",
+                                  start.field = "start",
+                                  end.field = "end",
+                                  keep.extra.columns = TRUE)
+  return(gr)
+})
+
+names(gpc_list) <- sapply(cov_files_gpc, function(file) {
+  name<-sub("_BS.*", "", basename(file))
+  gsub("_Pool_", "-", name) 
+})
+
+peakAnnoList_gpc <- lapply(gpc_list, annotatePeak, 
+                       TxDb = txDb, 
+                       tssRegion = c(-200, 200), 
+                       level = "transcript",
+                       annoDb = "org.Hs.eg.db",
+                       verbose = FALSE)
+#load cpg data
+cpg_list <- lapply(cov_files_cpg, function(file) {
+  cpg <- load_coverage(file)
+  cpg$sample <- sapply(strsplit(basename(file), "_dedup"), "[", 1)
+  gr <- makeGRangesFromDataFrame(cpg,
+                                  seqnames.field = "chrom",
+                                  start.field = "start",
+                                  end.field = "end",
+                                  keep.extra.columns = TRUE)
+  return(gr)
+})
+
+names(cpg_list) <- sapply(cov_files_cpg, function(file) {
+  name<-sub("_BS.*", "", basename(file))
+  gsub("_Pool_", "-", name) 
+})
+
+peakAnnoList_cpg <- lapply(cpg_list, annotatePeak, 
+                       TxDb = txDb, 
+                       tssRegion = c(-2000, 2000), 
+                       level = "transcript",
+                       annoDb = "org.Hs.eg.db",
+                       verbose = FALSE)
+
+stat_ocub_cpg<- as.data.frame(lapply(peakAnnoList_cpg, getAnnoStat))
+
+stat_cpg <- stat_ocub_cpg %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = c("Sample", ".value"),
+    names_pattern = "(EQUT\\.[^\\.]+\\.OCUB\\.F)\\.(Feature|Frequency)"
+  )
+stat_clean_cpg <- stat_cpg %>%
+  filter(Feature != "Distal Intergenic") %>%
+  group_by(Sample) %>%
+  mutate(
+    Frequency = 100 * Frequency / sum(Frequency)
+  ) %>%
+  ungroup()
+stat_clean_cpg_merged <- stat_clean_cpg %>%
+  mutate(Feature = ifelse(Feature %in% c("Promoter (<=1kb)", "Promoter (1-2kb)"),
+                          "Promoter", as.character(Feature))) %>%
+  group_by(Sample, Feature) %>%
+  summarise(Frequency = sum(Frequency), .groups = "drop")
+p<-plotAnnoBar(peakAnnoList_cpg)
+p_fin <- p + 
+  labs(
+    title = "Methylation distribution in genomic features (CpG)",
+    subtitle = ">3 read coverage CpG sites"
+  ) + 
+  theme_minimal() +
+  theme(
+    axis.line = element_line(color = "black", linewidth = 0.8),
+    panel.grid.major = element_blank(),
+    axis.text.y = element_text(size = 14, colour = "black"),
+    axis.text.x = element_text(size = 14, colour = "black", hjust = 0.5),
+    axis.title.x = element_text(size = 16, colour = "black"),
+    axis.title.y = element_text(size = 16, colour = "black"),
+    legend.text = element_text(size = 14, colour = "black"), 
+    legend.title = element_text(size = 14, colour = "black"),
+    plot.title = element_text(size = 16, colour = "black", hjust = 0.5),
+    plot.subtitle = element_text(size = 12, colour = "black", hjust = 0.5)
+  )
+ggsave(paste0(OUTDIR,"/genreg_cpg.png"), plot = p_fin, width = 10, height = 3)
+
+
+stat_ocub_gpc<- as.data.frame(lapply(peakAnnoList_gpc, getAnnoStat))
+
+stat_gpc <- stat_ocub_gpc %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = c("Sample", ".value"),
+    names_pattern = "(EQUT\\.[^\\.]+\\.OCUB\\.F)\\.(Feature|Frequency)"
+  )
+stat_clean_gpc <- stat_gpc %>%
+  filter(Feature != "Distal Intergenic") %>%
+  group_by(Sample) %>%
+  mutate(
+    Frequency = 100 * Frequency / sum(Frequency)
+  ) %>%
+  ungroup()
+p<-plotAnnoBar(peakAnnoList_gpc)
+p_fin <- p + 
+  labs(
+    title = "Methylation distribution in genomic features (GpC)",
+    subtitle = ">3 read coverage"
+  ) + 
+  theme_minimal() +
+  theme(
+    axis.line = element_line(color = "black", linewidth = 0.8),
+    panel.grid.major = element_blank(),
+    axis.text.y = element_text(size = 14, colour = "black"),
+    axis.text.x = element_text(size = 14, colour = "black", hjust = 0.5),
+    axis.title.x = element_text(size = 16, colour = "black"),
+    axis.title.y = element_text(size = 16, colour = "black"),
+    legend.text = element_text(size = 14, colour = "black"), 
+    legend.title = element_text(size = 14, colour = "black"),
+    plot.title = element_text(size = 16, colour = "black", hjust = 0.5),
+    plot.subtitle = element_text(size = 12, colour = "black", hjust = 0.5)
+  )
+ggsave(paste0(OUTDIR,"/genreg_gpc.png"), plot = p_fin, width = 10, height = 3)
+```
+
+# 3.1 NA12878
+```{r}
+library(ChIPseeker)
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+library(org.Hs.eg.db)
+library(clusterProfiler)
+library(UpSetR)
+library(enrichplot)
+library(dplyr)
+library(gridExtra)
+library(data.table)
+library(tidyverse)
+dir.input.all <- "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/bismark/SE/nondirectional/CPG_GPC"
+
+cov_files_cpg <- list.files(dir.input.all, pattern = ".*EQUT_Pool.*NA12878_BS.*\\.CpG\\.cov$", full.names = TRUE)
+cov_files_gpc <- list.files(dir.input.all, pattern = ".*EQUT_Pool.*NA12878_BS.*\\.GpC\\.cov$", full.names = TRUE)
+txDb<-TxDb.Hsapiens.UCSC.hg38.knownGene
+#load file function
+load_coverage <- function(file_path) {
+  cov_data <- data.frame(fread(file_path), stringsAsFactors = FALSE)
+  colnames(cov_data) <- c("chrom", "start", "end", "methylation_percentage", "count_methylated", "count_unmethylated")
+  cov_data$coverage = cov_data$count_methylated + cov_data$count_unmethylated
+  cov_data<- cov_data[cov_data$coverage >= 3,]
+  cov_data <- cov_data[cov_data$chrom %in% paste0("chr", c(1:22, "X")), ]
+  return(cov_data)
+}
+
+gpc_list <- lapply(cov_files_gpc, function(file) {
+  gpc <- load_coverage(file)
+  gpc$sample <- sapply(strsplit(basename(file), "_dedup"), "[", 1)
+  gr <- makeGRangesFromDataFrame(gpc,
+                                  seqnames.field = "chrom",
+                                  start.field = "start",
+                                  end.field = "end",
+                                  keep.extra.columns = TRUE)
+  return(gr)
+})
+
+names(gpc_list) <- sapply(cov_files_gpc, function(file) {
+  name<-sub("_BS.*", "", basename(file))
+  gsub("_Pool_", "-", name) 
+})
+
+peakAnnoList_gpc <- lapply(gpc_list, annotatePeak, 
+                       TxDb = txDb, 
+                       tssRegion = c(-200, 200), 
+                       level = "transcript",
+                       annoDb = "org.Hs.eg.db",
+                       verbose = FALSE)
+#load cpg data
+cpg_list <- lapply(cov_files_cpg, function(file) {
+  cpg <- load_coverage(file)
+  cpg$sample <- sapply(strsplit(basename(file), "_dedup"), "[", 1)
+  gr <- makeGRangesFromDataFrame(cpg,
+                                  seqnames.field = "chrom",
+                                  start.field = "start",
+                                  end.field = "end",
+                                  keep.extra.columns = TRUE)
+  return(gr)
+})
+
+names(cpg_list) <- sapply(cov_files_cpg, function(file) {
+  name<-sub("_BS.*", "", basename(file))
+  gsub("_Pool_", "-", name) 
+})
+
+peakAnnoList_cpg <- lapply(cpg_list, annotatePeak, 
+                       TxDb = txDb, 
+                       tssRegion = c(-2000, 2000), 
+                       level = "transcript",
+                       annoDb = "org.Hs.eg.db",
+                       verbose = FALSE)
+
+p<-plotAnnoBar(peakAnnoList_cpg)
+p_fin <- p + 
+  labs(
+    title = "NA12878 in genomic features (CpG)",
+    subtitle = ">3 read coverage"
+  ) + 
+  theme_minimal() +
+  theme(
+    axis.line = element_line(color = "black", linewidth = 0.8),
+    panel.grid.major = element_blank(),
+    axis.text.y = element_text(size = 14, colour = "black"),
+    axis.text.x = element_text(size = 14, colour = "black", hjust = 0.5),
+    axis.title.x = element_text(size = 16, colour = "black"),
+    axis.title.y = element_text(size = 16, colour = "black"),
+    legend.text = element_text(size = 14, colour = "black"), 
+    legend.title = element_text(size = 14, colour = "black"),
+    plot.title = element_text(size = 16, colour = "black", hjust = 0.5),
+    plot.subtitle = element_text(size = 12, colour = "black", hjust = 0.5)
+  )
+ggsave(paste0(OUTDIR,"/genreg_na12878_cpg.png"), plot = p_fin, width = 10, height = 3)
+
+stat_na_gpc<- as.data.frame(lapply(peakAnnoList_gpc, getAnnoStat))
+p<-plotAnnoBar(peakAnnoList_gpc)
+p_fin <- p + 
+  labs(
+    title = "NA12878 in genomic features (GpC)",
+    subtitle = ">3 read coverage"
+  ) + 
+  theme_minimal() +
+  theme(
+    axis.line = element_line(color = "black", linewidth = 0.8),
+    panel.grid.major = element_blank(),
+    axis.text.y = element_text(size = 14, colour = "black"),
+    axis.text.x = element_text(size = 14, colour = "black", hjust = 0.5),
+    axis.title.x = element_text(size = 16, colour = "black"),
+    axis.title.y = element_text(size = 16, colour = "black"),
+    legend.text = element_text(size = 14, colour = "black"), 
+    legend.title = element_text(size = 14, colour = "black"),
+    plot.title = element_text(size = 16, colour = "black", hjust = 0.5),
+    plot.subtitle = element_text(size = 12, colour = "black", hjust = 0.5)
+  )
+ggsave(paste0(OUTDIR,"/genreg_na12878_gpc.png"), plot = p_fin, width = 10, height = 3)
+```
+
+# 3.1 comparison between cell lines
+```{r}
+# Comparison between the cell lines
+stat_na_cpg<- as.data.frame(lapply(peakAnnoList_cpg, getAnnoStat))
+stat_long_na_cpg <- stat_na_cpg %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = c("Sample", ".value"),
+    names_pattern = "(EQUT\\.[^\\.]+\\.NA12878)\\.(Feature|Frequency)"
+  )
+stat_clean_na_cpg <- stat_long_na_cpg %>%
+  filter(Feature != "Distal Intergenic") %>%
+  group_by(Sample) %>%
+  mutate(
+    Frequency = 100 * Frequency / sum(Frequency)
+  ) %>%
+  ungroup()
+stat_clean_na_cpg_merged <- stat_clean_na_cpg %>%
+  mutate(Feature = ifelse(Feature %in% c("Promoter (<=1kb)", "Promoter (1-2kb)"),
+                          "Promoter", as.character(Feature))) %>%
+  group_by(Sample, Feature) %>%
+  summarise(Frequency = sum(Frequency), .groups = "drop")
+
+stat_all <- bind_rows(stat_clean_cpg_merged, stat_clean_na_cpg_merged)
+stat_all <- stat_all %>%
+  mutate(
+    Type = ifelse(str_detect(Sample, "OCUB.F"), "OCUB-F", "NA12878"),
+    Sample = str_replace(Sample, "\\.", "-"),       
+    Sample = str_replace(Sample, "\\.OCUB.F", ""),  
+    Sample = str_replace(Sample, "\\.NA12878", "")  
+  )
+
+stat_all$Feature<-factor(stat_all$Feature, levels=c("Promoter","5' UTR","1st Exon","1st Intron","Other Exon","Other Intron","3' UTR","Downstream (<=300)"))
+
+p_bar<-ggplot(stat_all, aes(x = Feature, y = Frequency, fill = Type)) +
+  geom_bar(stat = "identity", position = "dodge") +
+    scale_fill_manual(values = c("OCUB-F"= "#F1505DFF", "NA12878"= "#FECE51FF"), name = "Cell line") +
+  facet_wrap(~Sample , scales = "free_x") +
+  labs(
+    x = NULL, 
+    y = "Gneomic feature proportion (%)",
+    title = "EQUT WGA libraries in genomic features (CpG)",
+    subtitle = ">3 read coverage") +
+  scale_y_continuous(limits = c(0,50), breaks= seq(0,50,10))+
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text( hjust = 0.5, size = 14,  colour = "black"),
+    legend.position = "bottom",
+    axis.text.y = element_text(angle = 0, hjust = 1,size=14, colour = "black"),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    strip.text.x = element_text(size = 14, colour = "black"),
+    legend.text = element_text(size = 14, colour = "black"), 
+    legend.title = element_text(size = 14, colour = "black"),
+    axis.title.x = element_text(size=16,colour = "black"),
+    axis.title.y = element_text(size=16,colour = "black"),
+    plot.title = element_text(size = 16, colour = "black", hjust = 0.5),
+    plot.subtitle = element_text(size = 14, colour = "black", hjust = 0.5),
+    axis.line = element_line(color = "black", linewidth = 0.8)
+  )+
+  coord_flip()
+ggsave(paste0(OUTDIR,"/ocub_na_global_CPG.png"), p_bar, width = 8, height = 3.5)
+
+#Gpc
+stat_na_gpc<- as.data.frame(lapply(peakAnnoList_gpc, getAnnoStat))
+stat_long_na_gpc <- stat_na_gpc %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = c("Sample", ".value"),
+    names_pattern = "(EQUT\\.[^\\.]+\\.NA12878)\\.(Feature|Frequency)"
+  )
+stat_clean_na_gpc <- stat_long_na_gpc %>%
+  filter(Feature != "Distal Intergenic") %>%
+  group_by(Sample) %>%
+  mutate(
+    Frequency = 100 * Frequency / sum(Frequency)
+  ) %>%
+  ungroup()
+
+stat_all <- bind_rows(stat_clean_gpc, stat_clean_na_gpc)
+stat_all <- stat_all %>%
+  mutate(
+    Type = ifelse(str_detect(Sample, "OCUB.F"), "OCUB-F", "NA12878"),
+    Sample = str_replace(Sample, "\\.", "-"),       
+    Sample = str_replace(Sample, "\\.OCUB.F", ""),  
+    Sample = str_replace(Sample, "\\.NA12878", "")  
+  )
+
+stat_all$Feature<-factor(stat_all$Feature, levels=c("Promoter","5' UTR","1st Exon","1st Intron","Other Exon","Other Intron","3' UTR","Downstream (<=300)"))
+
+p_bar<-ggplot(stat_all, aes(x = Feature, y = Frequency, fill = Type)) +
+  geom_bar(stat = "identity", position = "dodge") +
+    scale_fill_manual(values = c("OCUB-F"= "#F1505DFF", "NA12878"= "#FECE51FF"), name = "Cell line") +
+  facet_wrap(~Sample , scales = "free_x") +
+  labs(
+    x = NULL, 
+    y = "Gneomic feature proportion (%)",
+    title = "EQUT WGA libraries in genomic features (GpC)",
+    subtitle = ">3 read coverage") +
+  scale_y_continuous(limits = c(0,60), breaks= seq(0,60,10))+
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text( hjust = 0.5, size = 14,  colour = "black"),
+    legend.position = "bottom",
+    axis.text.y = element_text(angle = 0, hjust = 1,size=14, colour = "black"),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    strip.text.x = element_text(size = 14, colour = "black"),
+    legend.text = element_text(size = 14, colour = "black"), 
+    legend.title = element_text(size = 14, colour = "black"),
+    axis.title.x = element_text(size=16,colour = "black"),
+    axis.title.y = element_text(size=16,colour = "black"),
+    plot.title = element_text(size = 16, colour = "black", hjust = 0.5),
+    plot.subtitle = element_text(size = 14, colour = "black", hjust = 0.5),
+    axis.line = element_line(color = "black", linewidth = 0.8)
+  )+
+  coord_flip()
+ggsave(paste0(OUTDIR,"/ocub_na_global_GPC.png"), p_bar, width = 8, height = 3.5)
+```
+
+# Result 3.2 functional region methylation pattern for NA12878
+```{r}
+# load libraries
+library(GenomicRanges)
+library(ggplot2)
+library(dplyr)
+library(gridExtra)
+library(data.table)
+library(biomaRt)
+library(tidyverse)
+dir.annotations<-"/data/scratch/DBC/UBCN/CANCDYN/genomes/homo-sapiens/hg38/methyl_external/GM12878"
+dir.input.all <- "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/bismark/SE/nondirectional/CPG_GPC"
+
+anno_files <- list.files(dir.annotations, pattern = "^gene_.*\\.bed$", full.names = TRUE)
+
+Anno_parts <- c("EP300", "DHS", "CTCF")
+filtered_anno_files <- anno_files[grepl(paste(Anno_parts, collapse = "|"), anno_files)]
+
+anno_list <- lapply(filtered_anno_files, fread, sep="\t", header=FALSE)
+
+anno_list <- lapply(seq_along(anno_list), function(i) {
+  df <- anno_list[[i]]
+  setnames(df, c("chr", "start", "end", "peak_col4", "peak_col5",
+                "exon_chr", "exon_start", "exon_end", "strand", "transcript_id", "distance"))
+  df[, id := paste0(names(anno_list)[i], "_", .I)]  # Assign IDs based on file name + row index
+  setkey(df, chr, start, end)
+  return(df)
+})
+names(anno_list) <- sapply(strsplit(basename(filtered_anno_files), "\\."), `[[`, 1)
+
+# Extract transcript IDs from all data.tables
+transcript_ids <- unique(unlist(lapply(anno_list, function(df) df$transcript_id)))
+library(rtracklayer)
+
+gtf <- import("/data/scratch/DBC/UBCN/CANCDYN/genomes/homo-sapiens/hg38/gtf/Homo_sapiens.GRCh38.112.chr_patch_hapl_scaff.gtf")
+transcripts <- gtf[gtf$type == "transcript"]
+gtf_map <- as.data.table(mcols(transcripts)[, c("transcript_id", "gene_name")])
+gtf_map <- unique(gtf_map)
+setnames(gtf_map, c("transcript_id", "external_gene_name"))
+mapping<-gtf_map
+anno_list <- lapply(anno_list, function(df) {
+  df <- merge(df, mapping, by = "transcript_id", all.x = TRUE)
+  df <- df[, .(chr, start, end, external_gene_name, distance, id)]
+  setnames(df, c("chr", "start", "end", "gene", "distance", "id"))
+  setkey(df, chr, start, end, id)
+  return(df)
+})
+dir.input.all <- "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/bismark/SE/nondirectional/CPG_GPC"
+
+cov_files_cpg <- list.files(dir.input.all, pattern = ".*EQUT_Pool.*NA12878_BS.*\\.CpG\\.cov$", full.names = TRUE)
+cov_files_gpc <- list.files(dir.input.all, pattern = ".*EQUT_Pool.*NA12878_BS.*\\.GpC\\.cov$", full.names = TRUE)
+
+window_size <- 50
+# number of bases before and after mid point
+extend <- 1000
+
+#load tss data and convert to GRanges
+library(GenomicRanges)
+
+create_midpoint_granges <- function(anno_list, extend = 1000) {
+  gr_list <- list()
+  for (anno_name in names(anno_list)) {
+    anno <- anno_list[[anno_name]]
+    gr <- GRanges(
+      seqnames = anno$chr,
+      ranges = IRanges(start = (anno$start+ (anno$end-anno$start)/2) - extend, end = (anno$start+ (anno$end-anno$start)/2)  + extend),
+      id = anno$id
+    )
+    
+    gr_list[[anno_name]] <- gr
+  }
+  
+  return(gr_list)
+}
+
+granges_list <- create_midpoint_granges(anno_list, extend = 1000)
+
+#load file function
+load_coverage <- function(file_path) {
+  cov_data <- data.frame(fread(file_path), stringsAsFactors = FALSE)
+  colnames(cov_data) <- c("chrom", "start", "end", "methylation_percentage", "count_methylated", "count_unmethylated")
+  cov_data$cov<- cov_data$count_methylated + cov_data$count_unmethylated
+  return(cov_data)
+}
+
+## Mean for each bin 
+
+#load gpc data
+gr_gpc <- list()
+gr_gpc <- do.call(rbind, lapply(cov_files_gpc, function(file) {
+  gpc <- load_coverage(file)
+  gpc$sample <- sapply(strsplit(basename(file), "_dedup"), "[", 1)
+  return(gpc)
+}))
+
+# Convert the aggregated data to GRanges in one go
+gr_gpc <- makeGRangesFromDataFrame(gr_gpc, 
+                                   seqnames.field = "chrom",
+                                   start.field = "start",
+                                   end.field = "end",
+                                   keep.extra.columns = TRUE)
+#load cpg data
+gr_cpg <- list()
+gr_cpg <- do.call(rbind, lapply(cov_files_cpg, function(file) {
+  cpg <- load_coverage(file)
+  cpg$sample <- sapply(strsplit(basename(file), "_dedup"), "[", 1)
+  return(cpg)
+}))
+
+# Convert the aggregated data to GRanges in one go
+gr_cpg <- makeGRangesFromDataFrame(gr_cpg, 
+                                   seqnames.field = "chrom",
+                                   start.field = "start",
+                                   end.field = "end",
+                                   keep.extra.columns = TRUE)
+
+# Initialize lists to store averages for each sample
+avg.cpg.bins <- list()
+avg.gpc.bins <- list()
+all_methylation_data <- list()
+all_chrom_data <- list()
+
+for (anno_name in names(granges_list)) {
+  cat("Processing annotation:", anno_name, "\n")
+  
+  gr_anno <- granges_list[[anno_name]]
+  bins_list <- tile(gr_anno, width = window_size)
+  bins <- unlist(bins_list)
+  
+  
+  for (sample in unique(gr_cpg$sample)) {
+    cat("  Sample:", sample, "\n")
+    
+    gr_cpg_sample <- gr_cpg[gr_cpg$sample == sample]
+    gr_gpc_sample <- gr_gpc[gr_gpc$sample == sample]
+    
+    sample_avg_cpg <- rep(NA, length(bins))
+    sample_avg_gpc <- rep(NA, length(bins))
+    
+    for (chr in seqlevels(bins)) {
+      bins_chr <- bins[seqnames(bins) == chr]
+      chr_idx <- which(seqnames(bins) == chr)
+      
+      gr_cpg_sample_chr <- gr_cpg_sample[seqnames(gr_cpg_sample) == chr]
+      gr_gpc_sample_chr <- gr_gpc_sample[seqnames(gr_gpc_sample) == chr]
+      
+      if (length(gr_cpg_sample_chr) == 0 && length(gr_gpc_sample_chr) == 0) next
+      
+      overlaps_cpg <- findOverlaps(bins_chr, gr_cpg_sample_chr)
+      overlaps_gpc <- findOverlaps(bins_chr, gr_gpc_sample_chr)
+      
+      cpg_means <- tapply(gr_cpg_sample_chr$methylation_percentage[subjectHits(overlaps_cpg)],
+                          queryHits(overlaps_cpg), mean, na.rm = TRUE)
+      gpc_means <- tapply(gr_gpc_sample_chr$methylation_percentage[subjectHits(overlaps_gpc)],
+                          queryHits(overlaps_gpc), mean, na.rm = TRUE)
+      
+      sample_avg_cpg[as.integer(names(cpg_means)) + chr_idx[1] - 1] <- cpg_means
+      sample_avg_gpc[as.integer(names(gpc_means)) + chr_idx[1] - 1] <- gpc_means
+    }
+    avg.cpg.bins[[sample]] <- sample_avg_cpg
+    avg.gpc.bins[[sample]] <- sample_avg_gpc
+  }
+  all_methylation_data[[anno_name]]<-avg.cpg.bins
+  all_chrom_data[[anno_name]]<-avg.gpc.bins
+}
+
+all_methylation_df <- list()  #hold data frames per annotation
+for (anno_name in names(all_methylation_data)) {
+  bins <- unlist(tile(granges_list[[anno_name]], width = window_size))  
+  avg.cpg.bins <- all_methylation_data[[anno_name]]
+  
+  anno_methylation_df <- data.frame()  # for the current annotation
+  
+  for (s in names(avg.cpg.bins)) {
+    sample_avg_meth <- avg.cpg.bins[[s]]
+    
+    methylation_data <- data.frame(
+      bin_start = start(bins),
+      relative_position = rep(seq(-1000, 1000, by = window_size), length(granges_list[[anno_name]])),
+      avg_meth = sample_avg_meth,
+      sample = s,
+      annotation = anno_name
+    )
+    anno_methylation_df <- rbind(anno_methylation_df, methylation_data)
+  }
+  all_methylation_df[[anno_name]] <- anno_methylation_df
+}
+# Combine everything 
+combined_methylation_df <- do.call(rbind, all_methylation_df)
+
+mean_methylation <- combined_methylation_df %>%
+  dplyr::group_by(annotation, sample, relative_position) %>%
+  dplyr::summarize(mean_avg_meth = mean(avg_meth, na.rm = TRUE), .groups = "drop")
+
+# chrom
+all_chrom_df <- list()  #hold data frames per annotation
+for (anno_name in names(all_chrom_data)) {
+  bins <- unlist(tile(granges_list[[anno_name]], width = window_size))  
+  avg.gpc.bins <- all_chrom_data[[anno_name]]
+  
+  anno_chrom_df <- data.frame()  # for the current annotation
+  
+  for (s in names(avg.gpc.bins)) {
+    sample_avg_chrom <- avg.gpc.bins[[s]]
+    
+    methylation_data <- data.frame(
+      bin_start = start(bins),
+      relative_position = rep(seq(-1000, 1000, by = window_size), length(granges_list[[anno_name]])),
+      avg_meth = sample_avg_chrom,
+      sample = s,
+      annotation = anno_name
+    )
+    anno_chrom_df <- rbind(anno_chrom_df, methylation_data)
+  }
+  all_chrom_df[[anno_name]] <- anno_chrom_df
+}
+# Combine everything 
+combined_chrom_df <- do.call(rbind, all_chrom_df)
+
+mean_chrom <- combined_chrom_df %>%
+  dplyr::group_by(annotation, sample, relative_position) %>%
+  dplyr::summarize(mean_avg_meth = mean(avg_meth, na.rm = TRUE), .groups = "drop")
+```
+# 3.15 plot
+```{r}
+plot_data <- data.frame()
+OUTDIR="/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/analysis/thesis"
+
+mean_chrom$type<-  "GpC methylation"
+mean_methylation$type<- "CpG methylation"
+
+combined_df <- bind_rows(mean_chrom,mean_methylation)
+combined_df$sample<- gsub("_Pool_","-",combined_df$sample)
+combined_df$sample<- gsub("_BS.*","",combined_df$sample)
+
+combined_df$annotation<-gsub("gene_","",combined_df$annotation)
+
+unique_polys <- unique(combined_df$sample)
+for (poly in unique_polys){
+  poly_data<-combined_df[which(combined_df$sample== poly),]
+  p<- ggplot(poly_data, aes(x = relative_position, y = mean_avg_meth, color = type, group = interaction(annotation, type))) +
+    geom_line(linewidth=1.8) +
+    labs(title = "Methylation levels relative to functional genomic context",
+       x = "Relative position to midpoint (bp)",
+       y = "Average methylation",
+       color = "Methylation type") +
+    scale_y_continuous(limits = c(0, 65), breaks = seq(0, 60, by = 20))+ 
+    theme_minimal() +
+    theme(
+      panel.spacing = unit(0.8, "cm"),
+      legend.position = "right",
+      axis.text.x = element_text( hjust = 0.5, size = 14,  colour = "black"),
+      axis.text.y = element_text(angle = 0, hjust = 1,size=14, colour = "black"),
+      strip.text.y = element_text(size = 16,  lineheight = 1.2,  colour = "black", angle = -90),  
+      strip.text.x = element_text(size = 16, lineheight = 1.2, angle= 0, colour = "black"),
+      panel.grid.minor.y = element_blank(),
+      panel.grid.minor.x = element_blank(),    
+      legend.text = element_text(size = 14, colour = "black"), 
+      legend.title = element_text(size = 14, colour = "black"),
+      axis.title.x = element_text(size=16,colour = "black"),
+      axis.title.y = element_text(size=16,colour = "black"),
+      axis.line = element_line(color = "black", linewidth = 0.8),
+      plot.title = element_text(size = 16, colour = "black", hjust = 0.5)
+    )+
+    facet_wrap(~ annotation, scales = "free_x")
+  ggsave(paste0(OUTDIR,"/fgc_methylation_test_", poly, ".png"), plot = p, width = 10, height = 3)
+}
+```
+
+
+# Result 3.3 Differential methylation 
+```{r}
+library(methylKit)
+
+dir.input.all <- "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/bismark/SE/nondirectional/CPG_GPC"
+OUTDIR= "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/analysis/thesis"
+
+#CpG
+#wga_bs
+cov_testBS_cpg <- list.files(dir.input.all, pattern = "^EQUT.*OCUB-F_BS.*\\.CpG_report\\.txt$", full.names = TRUE)
+cov_ctrlBS_cpg <- list.files(dir.input.all, pattern = "^EQUT.*NA12878_BS.*\\.CpG_report\\.txt$", full.names = TRUE)
+
+file.list.cpg<- as.list(c(cov_testBS_cpg,cov_ctrlBS_cpg))
+# Define sample IDs
+sample.id <- as.list(c(
+  paste0("OCUB-F", 1:length(cov_testBS_cpg)), 
+  paste0("NA12878", 1:length(cov_ctrlBS_cpg))
+))
+# Define treatment vector: 1 for test samples, 0 for control samples
+treatment <- c(rep(1, length(cov_testBS_cpg)), rep(0, length(cov_ctrlBS_cpg)))
+
+
+# Read the methylation data
+myobj <- methRead(
+  file.list.cpg,
+  sample.id =sample.id,
+  assembly = "hg38",
+  treatment = treatment,
+  context = "CpG",
+  mincov = 3,
+  pipeline= "bismarkCytosineReport"
+)
+
+#merge samples for comparatigve analysis 
+#get the bases covered in at least 1 sample per group. Setting destrand=TRUE (the default is FALSE) will merge reads on both strands of a CpG dinucleotide. This provides better coverage, but only advised when looking at CpG methylation (for CpH methylation this will cause wrong results in subsequent analyses).
+meth_bs = methylKit::unite(myobj, destrand=TRUE, min.per.group = 1L)
+ #every three column is a new sample-- I haven't set additional filters as the qualities of the libraries vary and judging from the coverage PCR bias (i.e. second peak towards high coverage) is not seen
+```
+
+# 3.3 methylation pattern inspection (to validate cell line difference)
+```{r}
+samples<-basename(c(cov_testBS_cpg,cov_ctrlBS_cpg))
+samples<-sub("_BS.*", "", samples)
+samples<-sub("_Pool_", "-", samples)
+
+clusterSamples(meth_bs, dist="correlation", method="ward.D", plot=TRUE)
+hc = clusterSamples(meth_bs, dist="correlation", method="ward.D", plot=FALSE)
+label_map <-setNames(samples, unlist(sample.id))
+hc$labels <- label_map[hc$labels]
+
+dend <- as.dendrogram(hc)
+#install.packages('dendextend')
+library(dendextend)
+dend <- set(dend, "labels_cex", 1.2)  # Adjust for readability
+# Assign two colors based on treatment
+my.cols <- c("#3B0F70FF", "#F1605DFF")  
+treatment_col <- my.cols[treatment + 1]  #  test=red, ctrl=blue
+
+dend <- set(dend, "labels_col", treatment_col)
+png_wgabs <- paste0(OUTDIR,"/methylation_profile_wgabs_dendrogram(methylkit).png")
+png(png_wgabs, width = 800, height = 600) 
+par(mar = c(10, 5, 4, 2))  
+plot(dend, main = "Methylation pattern (WGA_BS)",  ylab = "Height")
+legend("topright", legend = c("OCUB-F", "NA12878"), fill = my.cols, border = NA)
+dev.off()
+
+```
+
+# Differentially methylated regions
+```{r}
+#logistic regression based differential analysis
+myDiff=calculateDiffMeth(meth_bs)
+#human chrom filter
+myDiff_data <- getData(myDiff)
+myDiff_data <- myDiff_data[myDiff_data$chr %in% c(paste0("chr", 1:22), "chrX"), ]
+myDiff <- new("methylDiff", myDiff_data, sample.ids = myDiff@sample.ids, 
+              assembly = myDiff@assembly, context = myDiff@context, 
+              treatment = myDiff@treatment, destranded = myDiff@destranded)
+# get hypermethylated bases
+myDiff25p.hyper=getMethylDiff(myDiff,difference=25,qvalue=0.01,type="hyper")
+# get hypomethylated bases
+myDiff25p.hypo=getMethylDiff(myDiff,difference=25,qvalue=0.01,type="hypo")
+#all
+myDiff25p=getMethylDiff(myDiff,difference=25,qvalue=0.01)
+write.csv(myDiff25p, paste0(OUTDIR,"/DMsite_wga_bs_cpg.csv"), row.names = FALSE) 
+
+
+# ggplot implementation of diffMethPerChr visualisation (chromosome level inspection)
+plotDiffMethPerChr <- function(myDiff, qvalue.cutoff = 0.01, meth.cutoff = 25) {
+  
+  # Extract chromosome-wise stats
+  diff.table <- diffMethPerChr(myDiff, plot = FALSE, qvalue.cutoff = qvalue.cutoff, meth.cutoff = meth.cutoff)
+  diff.table <- diff.table$diffMeth.per.chr
+  
+  # Reshape data for ggplot2 (long format)
+  df_long <- melt(diff.table[, c(1, 3, 5)], id.vars = "chr", variable.name = "Methylation", value.name = "Percentage")
+  df_long$Methylation <- factor(df_long$Methylation, levels = c("percentage.of.hypermethylated", "percentage.of.hypomethylated"),
+                                labels = c("Hypermethylated", "Hypomethylated"))
+  df_long$chr <- factor(df_long$chr, levels = unique(df_long$chr))
+
+  p <- ggplot(df_long, aes(x= Percentage, y= chr, fill = Methylation))+
+    geom_bar(stat="identity", position="stack")+
+    scale_fill_manual(values = c("#F1605DFF", "#3B0F70FF")) +
+    labs(
+      title = paste0("% of Hyper & Hypo Methylated Regions per Chromosome","\n","(OCUB-F vs GM12878)"),
+      subtitle = paste("qvalue <", qvalue.cutoff, " & methylation difference >=", meth.cutoff, "%"),
+      x = "% (percentage)",
+      y = "Chromosome",
+      fill = "Methylation Type"
+    ) +
+    theme_minimal() +
+    theme(
+      legend.position = "right",
+      legend.title = element_text(size=16, colour = "black"),
+      legend.text = element_text(size = 16, colour = "black"),
+      axis.text.y=element_text(size=14, colour = "black"),
+      axis.text.x=element_text(size=14, colour = "black"),
+      axis.title.x = element_text(size=16,colour = "black"),
+      axis.title.y = element_text(size=16,colour = "black"),
+      plot.title = element_text(size = 16, colour = "black", hjust =0.5),
+      plot.subtitle = element_text(size = 14, colour = "black", hjust =0.5),
+      axis.line = element_line(color = "black", linewidth = 0.8),
+      panel.grid.major.y = element_blank(),  # Remove horizontal grid
+      panel.grid.minor.y = element_blank()
+    )
+  return(p)
+}
+p<-plotDiffMethPerChr(myDiff)
+ggsave(paste0(OUTDIR,"/perchromDM_wgabs.png"), p, width = 8, height = 5, bg = "white")
+```
+
+# Results 3.4 genomic region finder
+```{r}
+library(ChIPseeker)
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+library(org.Hs.eg.db)
+library(clusterProfiler)
+library(UpSetR)
+library(enrichplot)
+library(ggplot2)
+library(ggrepel)
+
+txDb<-TxDb.Hsapiens.UCSC.hg38.knownGene
+gr_dmcpg <- as(myDiff, "GRanges")
+peakAnno_cpg <- annotatePeak(gr_dmcpg, tssRegion=c(-2000, 2000),
+                             TxDb=txDb,level= "transcript",annoDb="org.Hs.eg.db" )
+statsp<-getAnnoStat(peakAnno_cpg)
+plotAnnoPie(peakAnno_cpg)
+upsetplot(peakAnno_cpg)
+dmr_anno<-as.data.frame(peakAnno_cpg@anno)
+dmr_sig<- dmr_anno %>%
+  filter(qvalue <0.05,
+         abs(meth.diff) > 25 )
+dmr_sig$big_cat<- gsub("[(].*","",dmr_sig$annotation)
+dmr_sig_HYPER <- dmr_sig %>%
+  filter(meth.diff > 0, big_cat %in% c("Promoter "))
+
+dmr_sig_HYPO <- dmr_sig %>%
+  filter(meth.diff < 0,  big_cat %in% c("Promoter "))
+
+dmr_anno$big_cat<- gsub("[(].*","",dmr_anno$annotation)
+
+# global DMR significance
+All_prom<- dmr_anno %>%
+  filter( big_cat %in% c("Promoter "))
+All_prom$sig <- "N.S"
+All_prom$sig[All_prom$qvalue <0.05 & All_prom$meth.diff >25] <- "Hypermethylation"
+All_prom$sig[All_prom$qvalue <0.05 & All_prom$meth.diff < (-25)] <- "Hypomethylation"
+
+direction<-c("Hypomethylation","N.S","Hypermethylation")
+dir_col<-setNames(c("blue","black","red"),direction)
+All_prom$row_id<- rownames(All_prom)
+topup10<-All_prom %>%
+  filter(qvalue < 0.05,
+         meth.diff > 25,
+         !is.na(SYMBOL)) %>%
+  arrange(qvalue) %>%
+  distinct(SYMBOL, .keep_all = TRUE) %>%
+  head(n=10)
+
+topdown10<-All_prom %>%
+  filter(qvalue < 0.05,
+         meth.diff < -25,
+         !is.na(SYMBOL)) %>%
+  arrange(qvalue) %>%
+  distinct(SYMBOL, .keep_all = TRUE) %>%
+  head(n=10)
+
+top<-rbind(topdown10,topup10)
+All_prom$lab<-NA
+All_prom$lab[rownames(All_prom) %in% top$row_id]<-
+  All_prom$SYMBOL[rownames(All_prom) %in% top$row_id]
+p<-ggplot(All_prom, aes(x=meth.diff, y=-log10(qvalue))) +
+  geom_jitter(
+    aes(colour = sig),
+    size = 1, alpha = 0.9
+    ) + 
+  scale_color_manual(values= dir_col) +
+  geom_text_repel(
+    aes(label = lab),
+    size = 3,
+    nudge_y = 0.2,
+    max.overlaps = Inf,
+    segment.color = "grey50",
+    box.padding = 0.5,
+    point.padding = 0.3
+    ) +
+  labs(
+    title = "Differential endogenous methylation for EQUT libraries",
+    x = bquote(Delta~"Methylation percentage (OCUB-F - NA12878)"),
+    y = "-log10(qvalue)",
+    colour = "Significance"
+    ) +
+  scale_x_continuous(limits = c(-105,105),breaks = seq(-100,100,20))+
+  geom_vline(xintercept=c(-25, 25), col="grey",linetype = "dashed", linewidth = 1 ) +
+  geom_hline(yintercept=-log10(0.05), col="grey",linetype = "dashed", linewidth = 1)+
+  theme_minimal() +
+  theme(
+        legend.position = "bottom",
+        legend.title = element_text(size=16, colour = "black"),
+        legend.text = element_text(size = 16, colour = "black"),
+        axis.text.y=element_text(size=14, colour = "black"),
+        axis.text.x=element_text(size=14, colour = "black"),
+        axis.title.x = element_text(size=16,colour = "black"),
+        axis.title.y = element_text(size=16,colour = "black"),
+        plot.title = element_text(size = 16, colour = "black", hjust =0.5),      
+        axis.line = element_line(color = "black", linewidth = 0.8)
+    )
+print(p)
+ggsave(paste0(OUTDIR,"/volc_0.05_25.png"), p, width = 6.5, height = 4)
+```
+
+# Results 3.5 Enrichment analysis of DMRs
+```{r}
+#enrichment GO
+enr_hypo<-unique(dmr_sig_HYPO$geneId)
+ego <- enrichGO(gene          = enr_hypo,
+                OrgDb         = org.Hs.eg.db,
+                ont           = "BP",
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 0.1,
+                qvalueCutoff = 0.1,
+                readable = TRUE)
+
+p<-heatplot(ego, showCategory=5)
+ego_plotdata<-as.data.frame(p$data)
+ego_plotdata <- merge(ego_plotdata, dmr_sig_HYPO[, c("SYMBOL", "meth.diff")],
+                      by.x = "Gene", by.y = "SYMBOL", all.x = TRUE)
+ego_plotdata$meth.diff<- abs(round(ego_plotdata$meth.diff,2))
+ego_plotdata <- ego_plotdata %>%
+  mutate(categoryID = if_else(
+    str_count(categoryID, "\\S+") > 3,  # count words
+    str_replace(categoryID, paste0("^((\\S+\\s+){3})"), "\\1\n"),  # insert \n after 3rd word
+    categoryID
+  ))
+
+presence_df <- ego_plotdata %>%
+  mutate(present = 1L) %>%  
+  distinct(Gene, categoryID, present) %>%
+  pivot_wider(
+    names_from = categoryID,
+    values_from = present,
+    values_fill = list(present = 0L)  
+  )
+
+meth_diff_df <- ego_plotdata %>%
+  select(Gene, meth.diff) %>%
+  distinct()
+
+presence_df <- presence_df %>%
+  left_join(meth_diff_df, by = "Gene")
+
+presence_long <- presence_df %>%
+  pivot_longer(
+    cols = -c(Gene, meth.diff),
+    names_to = "GO_term",
+    values_to = "presence"
+  ) %>%
+  mutate(presence = factor(presence, levels = c(0,1), labels = c("Absent", "Present")))
+label_positions <- presence_long %>%
+  group_by(Gene) %>%
+  filter(meth.diff == max(meth.diff, na.rm = TRUE)) %>% 
+  summarise(
+    x_pos = max(as.numeric(factor(GO_term))) + 0.5, # offset
+    meth.diff = unique(meth.diff)
+  )
+
+p <- ggplot(presence_long, aes(x = Gene, y = GO_term, fill = presence)) +
+  geom_tile(color = "black") +
+  scale_fill_manual(values = c("Absent" = "#3B0F70FF", "Present" = "#F1605DFF")) +
+  labs(
+    x = "Gene",
+    y = "GO term",
+    fill = "Presence in GO term",
+    title = paste0("Hypomethylation enriched","\n","gene ontology (GO) pathways"),
+    subtitle = "p.adjust < 0.1, q value < 0.1"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major = element_blank(),
+    legend.position = "bottom",
+    legend.title = element_text(size=16, colour = "black"),
+    legend.text = element_text(size = 16, colour = "black"),
+    axis.text.y = element_text(size = 14, colour = "black"),
+    axis.text.x = element_text(size = 14, colour = "black", angle = 90),
+    axis.title.x = element_text(size = 16, colour = "black"),
+    axis.title.y = element_text(size = 16, colour = "black"),
+    plot.title = element_text(size = 16, colour = "black", hjust = 0.5),
+    plot.subtitle = element_text(size = 12, colour = "black", hjust = 0.5)
+  )+
+  coord_cartesian(clip = "off")
+ggsave(paste0(OUTDIR,"/enrichgo_hypo_test.png"), p, width = 8, height = 4)
+```
+
+```{r}
+enr_hyper<-unique(dmr_sig_HYPER$geneId)
+ego_hyper<- enrichGO(gene     = enr_hyper,
+                OrgDb         = org.Hs.eg.db,
+                ont           = "BP",
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 0.01,
+                qvalueCutoff = 0.05,
+                readable = TRUE)
+p<-heatplot(ego_hyper, showCategory=3)
+ego_plotdata<-as.data.frame(p$data)
+ego_plotdata <- merge(ego_plotdata, dmr_sig_HYPER[, c("SYMBOL", "meth.diff")],
+                      by.x = "Gene", by.y = "SYMBOL", all.x = TRUE)
+
+presence_df <- ego_plotdata %>%
+  mutate(present = 1L) %>%  
+  distinct(Gene, categoryID, present) %>%
+  pivot_wider(
+    names_from = categoryID,
+    values_from = present,
+    values_fill = list(present = 0L)  
+  )
+
+meth_diff_df <- ego_plotdata %>%
+  select(Gene, meth.diff) %>%
+  distinct()
+
+presence_df <- presence_df %>%
+  left_join(meth_diff_df, by = "Gene")
+
+presence_long <- presence_df %>%
+  pivot_longer(
+    cols = -c(Gene, meth.diff),
+    names_to = "GO_term",
+    values_to = "presence"
+  ) %>%
+  mutate(presence = factor(presence, levels = c(0,1), labels = c("Absent", "Present")))
+label_positions <- presence_long %>%
+  group_by(Gene) %>%
+  filter(meth.diff == max(meth.diff, na.rm = TRUE)) %>% 
+  summarise(
+    x_pos = max(as.numeric(factor(GO_term))) + 0.5, # offset
+    meth.diff = unique(meth.diff)
+  )
+
+p <- ggplot(presence_long, aes(x = Gene, y = GO_term, fill = presence)) +
+  geom_tile(color = "black") +
+  scale_fill_manual(values = c("Absent" = "#3B0F70FF", "Present" = "#F1605DFF")) +
+  labs(
+    x = "Gene",
+    y = "GO term",
+    fill = "Presence in GO term",
+    title = paste0("Hypermethylation enriched","\n","gene ontology (GO) pathways"),
+    subtitle = "p.adjust < 0.01, q value <0.05"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major = element_blank(),
+    legend.position = "bottom",
+    legend.title = element_text(size=16, colour = "black"),
+    legend.text = element_text(size = 16, colour = "black"),
+    axis.text.y = element_text(size = 14, colour = "black"),
+    axis.text.x = element_text(size = 14, colour = "black", angle = 90),
+    axis.title.x = element_text(size = 16, colour = "black"),
+    axis.title.y = element_text(size = 16, colour = "black"),
+    plot.title = element_text(size = 16, colour = "black", hjust = 0.5),
+    plot.subtitle = element_text(size = 12, colour = "black", hjust = 0.5)
+  )+
+  coord_cartesian(clip = "off")
+ggsave(paste0(OUTDIR,"/enrichgo_hyper_test.png"), p, width = 10, height = 4)
+```
+
+# Hallmark enrichment
+```{r}
+library(msigdbr)
+m_t2g <- msigdbr(species = "Homo sapiens", category = "H") %>% 
+  dplyr::select(gs_name, db_gene_symbol)
+hypo_gene<-unique(dmr_sig_HYPO$SYMBOL)
+em <- enricher(hypo_gene, TERM2GENE=m_t2g,pvalueCutoff = 1, qvalueCutoff = 1)
+p<-heatplot(em, showCategory=3)
+ego_plotdata<-as.data.frame(p$data)
+ego_plotdata <- merge(ego_plotdata, dmr_sig_HYPO[, c("SYMBOL", "meth.diff")],
+                      by.x = "Gene", by.y = "SYMBOL", all.x = TRUE)
+
+presence_df <- ego_plotdata %>%
+  mutate(present = 1L) %>%  
+  distinct(Gene, categoryID, present) %>%
+  pivot_wider(
+    names_from = categoryID,
+    values_from = present,
+    values_fill = list(present = 0L)  
+  )
+
+meth_diff_df <- ego_plotdata %>%
+  select(Gene, meth.diff) %>%
+  distinct()
+
+presence_df <- presence_df %>%
+  left_join(meth_diff_df, by = "Gene")
+
+presence_long <- presence_df %>%
+  pivot_longer(
+    cols = -c(Gene, meth.diff),
+    names_to = "hallmark",
+    values_to = "presence"
+  ) %>%
+  mutate(presence = factor(presence, levels = c(0,1), labels = c("Absent", "Present")))
+label_positions <- presence_long %>%
+  group_by(Gene) %>%
+  filter(meth.diff == max(meth.diff, na.rm = TRUE)) %>% 
+  summarise(
+    x_pos = max(as.numeric(factor(hallmark))) + 0.5, # offset
+    meth.diff = unique(meth.diff)
+  )
+
+p <- ggplot(presence_long, aes(x = Gene, y = hallmark, fill = presence)) +
+  geom_tile(color = "black") +
+  scale_fill_manual(values = c("Absent" = "#3B0F70FF", "Present" = "#F1605DFF")) +
+  labs(
+    x = "Gene",
+    y = "Hallmarks",
+    fill = "Presence in Hallmark term",
+    title = paste0("Hypomethylation enriched","\n","MsigDB hallmarks"),
+    subtitle = "p.adjust n.s., q value n.s."
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major = element_blank(),
+    legend.position = "bottom",
+    legend.title = element_text(size=16, colour = "black"),
+    legend.text = element_text(size = 16, colour = "black"),
+    axis.text.y = element_text(size = 14, colour = "black"),
+    axis.text.x = element_text(size = 14, colour = "black", angle = 90),
+    axis.title.x = element_text(size = 16, colour = "black"),
+    axis.title.y = element_text(size = 16, colour = "black"),
+    plot.title = element_text(size = 16, colour = "black", hjust = 0.5),
+    plot.subtitle = element_text(size = 12, colour = "black", hjust = 0.5)
+  )+
+  coord_cartesian(clip = "off")
+ggsave(paste0(OUTDIR,"/hallmark_hypo_test.png"), p, width = 10, height = 4)
+
+
+#hyper
+hyper_gene<-unique(dmr_sig_HYPER$SYMBOL)
+em <- enricher(hyper_gene, TERM2GENE=m_t2g,pvalueCutoff = 1, qvalueCutoff = 1)
+p<-heatplot(em, showCategory=3)
+ego_plotdata<-as.data.frame(p$data)
+ego_plotdata <- merge(ego_plotdata, dmr_sig_HYPER[, c("SYMBOL", "meth.diff")],
+                      by.x = "Gene", by.y = "SYMBOL", all.x = TRUE)
+ego_plotdata$meth.diff<- abs(round(ego_plotdata$meth.diff,2))
+
+presence_df <- ego_plotdata %>%
+  mutate(present = 1L) %>%  
+  distinct(Gene, categoryID, present) %>%
+  pivot_wider(
+    names_from = categoryID,
+    values_from = present,
+    values_fill = list(present = 0L)  
+  )
+
+meth_diff_df <- ego_plotdata %>%
+  select(Gene, meth.diff) %>%
+  distinct()
+
+presence_df <- presence_df %>%
+  left_join(meth_diff_df, by = "Gene")
+
+presence_long <- presence_df %>%
+  pivot_longer(
+    cols = -c(Gene, meth.diff),
+    names_to = "hallmark",
+    values_to = "presence"
+  ) %>%
+  mutate(presence = factor(presence, levels = c(0,1), labels = c("Absent", "Present")))
+label_positions <- presence_long %>%
+  group_by(Gene) %>%
+  filter(meth.diff == max(meth.diff, na.rm = TRUE)) %>% 
+  summarise(
+    x_pos = max(as.numeric(factor(hallmark))) + 0.5, # offset
+    meth.diff = unique(meth.diff)
+  )
+
+p <- ggplot(presence_long, aes(x = Gene, y = hallmark, fill = presence)) +
+  geom_tile(color = "black") +
+  scale_fill_manual(values = c("Absent" = "#3B0F70FF", "Present" = "#F1605DFF")) +
+  labs(
+    x = "Gene",
+    y = "Hallmarks",
+    fill = "Presence in Hallmark term",
+    title = paste0("Hypermethylation enriched","\n","MsigDB hallmarks"),
+    subtitle = "p.adjust n.s., q value n.s."
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major = element_blank(),
+    legend.position = "bottom",
+    legend.title = element_text(size=16, colour = "black"),
+    legend.text = element_text(size = 16, colour = "black"),
+    axis.text.y = element_text(size = 14, colour = "black"),
+    axis.text.x = element_text(size = 14, colour = "black", angle = 90),
+    axis.title.x = element_text(size = 16, colour = "black"),
+    axis.title.y = element_text(size = 16, colour = "black"),
+    plot.title = element_text(size = 16, colour = "black", hjust = 0.5),
+    plot.subtitle = element_text(size = 12, colour = "black", hjust = 0.5)
+  )+
+  coord_cartesian(clip = "off")
+ggsave(paste0(OUTDIR,"/hallmark_hyper_test.png"), p, width = 12, height = 4)
+```
+
+# Results 3.6 significant DMR and associated GpC methyaltion
+```{r}
+load_methylation <- function(file_path) {
+  cov_data <- fread(file_path)
+  colnames(cov_data) <- c("chrom", "start", "end", "methylation_percentage", "meth_count", "unmeth_count")
+  cov_data$coverage = cov_data$meth_count + cov_data$unmeth_count
+  cov_data<- cov_data[cov_data$coverage >= 3,]
+  return(as.data.frame(cov_data, stringsAsFactors = FALSE))
+}
+
+
+cov_files_gpc <- list.files(dir.input.all, pattern = "^EQUT.*OCUB-F_BS.*\\.GpC\\.cov$", full.names = TRUE)
+gr_gpc <- list()
+gr_gpc <- do.call(rbind, lapply(cov_files_gpc, function(file) {
+  gpc <- load_methylation(file)
+  gpc$sample <- sapply(strsplit(basename(file), "_dedup"), "[", 1)
+  gpc <- gpc[gpc$chrom %in% paste0("chr", c(1:22, "X")), ]
+  return(gpc)
+}))
+gr_gpc_agg <- gr_gpc %>%
+  group_by(chrom, start, end) %>%
+  summarise(
+    meth_sum = sum(meth_count),
+    unmeth_sum = sum(unmeth_count),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    coverage = meth_sum + unmeth_sum,
+    methylation_percentage = 100 * meth_sum / coverage
+  )
+
+gr_gpc_gr_list <- GRanges(seqnames = gr_gpc_agg$chrom,
+          ranges = IRanges(start = gr_gpc_agg$start, end = gr_gpc_agg$end),
+          methylation_percentage = gr_gpc_agg$methylation_percentage)
+
+
+peakAnno_gpc <- annotatePeak(gr_gpc_gr_list, tssRegion=c(-200, 200),
+                             TxDb=txDb,level= "transcript",annoDb="org.Hs.eg.db" )
+gpc_anno<-as.data.frame(peakAnno_gpc@anno)
+gpc_anno$big_cat<- gsub("[(].*","",gpc_anno$annotation)
+gpc_anno_prom <- gpc_anno %>%
+  filter(big_cat %in% c("Promoter"))
+
+gpc_annoatated_grouped_prom<- gpc_anno_prom %>%
+  group_by(SYMBOL) %>%  
+  dplyr::summarise(
+    gpc_avg_methylation = mean(methylation_percentage, na.rm = TRUE),
+    gpc_sites = n()
+  )
+dmr_sig_HYPER_JOIN<-left_join(dmr_sig_HYPER,gpc_annoatated_grouped_prom, by = "SYMBOL")
+dmr_sig_HYPER_JOIN$chrom_accessibility <- ifelse(
+  is.na(dmr_sig_HYPER_JOIN$gpc_avg_methylation), "No GpC detected",
+  ifelse(dmr_sig_HYPER_JOIN$gpc_avg_methylation >= 20, "Open chromatin",
+    ifelse(dmr_sig_HYPER_JOIN$gpc_avg_methylation < 20, "Closed chromatin", "N.C.")
+  )
+)
+
+dmr_sig_HYPO_JOIN<-left_join(dmr_sig_HYPO,gpc_annoatated_grouped_prom, by = "SYMBOL")
+dmr_sig_HYPO_JOIN$chrom_accessibility <- ifelse(
+  is.na(dmr_sig_HYPO_JOIN$gpc_avg_methylation), "No GpC detected",
+  ifelse(dmr_sig_HYPO_JOIN$gpc_avg_methylation >= 20, "Open chromatin",
+    ifelse(dmr_sig_HYPO_JOIN$gpc_avg_methylation < 20, "Closed chromatin", "N.C.")
+  )
+)
+
+enr_hypo<-unique(dmr_sig_HYPO$geneId)
+ego <- enrichGO(gene          = enr_hypo,
+                OrgDb         = org.Hs.eg.db,
+                ont           = "BP",
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 0.1,
+                qvalueCutoff = 0.1,
+                readable = TRUE)
+
+p<-heatplot(ego, showCategory=5)
+ego_plotdata<-as.data.frame(p$data)
+enrichgo_hypo<-unique(ego_plotdata$Gene)
+HYPO_go_join<-dmr_sig_HYPO_JOIN[which(dmr_sig_HYPO_JOIN$SYMBOL %in% enrichgo_hypo),]
+write.csv(HYPO_go_join, paste0(OUTDIR,"/hypo_chrom_status.csv"), row.names = FALSE)
+
+
+enr_hyper<-unique(dmr_sig_HYPER$geneId)
+ego <- enrichGO(gene          = enr_hyper,
+                OrgDb         = org.Hs.eg.db,
+                ont           = "BP",
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 0.1,
+                qvalueCutoff = 0.1,
+                readable = TRUE)
+
+p<-heatplot(ego, showCategory=5)
+ego_plotdata<-as.data.frame(p$data)
+enrichgo_hyper<-unique(ego_plotdata$Gene)
+HYPER_go_join<-dmr_sig_HYPER_JOIN[which(dmr_sig_HYPER_JOIN$SYMBOL %in% enrichgo_hyper),]
+
+write.csv(HYPER_go_join, paste0(OUTDIR,"/hyper_chrom_status.csv"), row.names = FALSE)
+
+```
+
+# write all packages loaded
+```{r}
+# Get loaded  packages
+loaded_pkgs <- .packages()
+
+# Get package names + versions
+pkg_info <- sapply(loaded_pkgs, function(pkg) {
+  ver <- as.character(packageVersion(pkg))
+  c(Package = pkg, Version = ver)
+})
+pkg_info <- as.data.frame(t(pkg_info), stringsAsFactors = FALSE)
+
+# citations
+pkg_refs <- lapply(seq_len(nrow(pkg_info)), function(i) {
+  pkg <- pkg_info$Package[i]
+  ver <- pkg_info$Version[i]
+  
+  cit <- tryCatch(citation(pkg), error = function(e) NULL)
+  
+  if (!is.null(cit)) {
+    # Take only the first citation
+    ref <- format(cit[[1]], style = "text")
+    data.frame(
+      Package = pkg,
+      Version = ver,
+      Reference = ref,
+      stringsAsFactors = FALSE
+    )
+  } else {
+    data.frame(Package = pkg, Version = ver, Reference = NA, stringsAsFactors = FALSE)
+  }
+})
+
+# Combine into one data frame
+pkg_refs_df <- do.call(rbind, pkg_refs)
+
+pkg_refs_df <- unique(pkg_refs_df)
+
+pkg_refs_df$Reference <- gsub("[\r\n]+", " ", pkg_refs_df$Reference)
+pkg_refs_df$Reference <- gsub("\\s+", " ", pkg_refs_df$Reference)
+
+pkg_refs_df$Reference_simple <- sapply(pkg_refs_df$Reference, function(ref) {
+  if (is.na(ref)) return(NA)
+  
+  # Extract first author (before first comma)
+  first_author <- str_extract(ref, "^[^,]+")
+  
+  # Extract year in parentheses
+  year <- str_extract(ref, "\\(\\d{4}\\)")
+  
+  # Extract DOI if present
+  doi <- str_extract(ref, "10\\.\\d{4,9}/[-._;()/:A-Z0-9]+")
+  
+  # Extract URL if present
+  url <- str_extract(ref, "https?://[^ >]+")
+  
+  # Combine available elements
+  parts <- c()
+  if (!is.na(first_author) & !is.na(year)) parts <- c(parts, paste0(first_author, " ", year))
+  if (!is.na(doi)) parts <- c(parts, doi)
+  if (!is.na(url)) parts <- c(parts, url)
+  
+  paste(parts, collapse = " | ")
+})
+
+# Save as TSV
+write.table(pkg_refs_df, paste0(OUTDIR,"/R_packages.tsv"), sep = "\t", row.names = FALSE, quote = TRUE,fileEncoding = "UTF-8")
+
+```
+
+```{r}
+sessionInfo()
+```
+
