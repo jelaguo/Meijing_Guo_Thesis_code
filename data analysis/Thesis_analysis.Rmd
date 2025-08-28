@@ -2,7 +2,13 @@
 title: "Thesis Analysis"
 output: html_notebook
 ---
-This is a script with all the results and analysis shown in the thesis using R.
+# This is a script with all the results and analysis shown in the thesis using R.
+
+### Results 0.5: preparing quality assessment data
+### Results 1.x: library quality assessments (mapping efficiency, unique alignment and CpG/GpC coverage)
+### Results 2.1-2.3 : global methylation related assessments (methylation control, methylation pattern, methylation coverage)
+### Results 2.4-2.9: copy number alteration computation and exploration (CNA profile, noise assessment, agreement and correlation, identification of co-amplified genes)
+### Results 3.1-3.6 functional exploration of methylation profiles for WGA-BS libraries, DMR identification, functional enrichment analysis
 
 # Results 0.5 QC mapping efficiency & methylation compile data for analysis 
 ```{r}
@@ -240,7 +246,7 @@ raw<-rbind(ref,nwga,wga)
 OUTPUT_DIR = "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/analysis/thesis"
 write.table(raw,paste0(OUTDIR,"/sequencing_depth.tsv"),row.names = FALSE)
 ```
-# Supplementary statistical test
+## Results 0.5 Supplementary statistical test
 ```{r}
 #cleaned sequencing depth table generated from previous step
 OUTPUT_DIR = "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/analysis/thesis"
@@ -264,7 +270,8 @@ write.table(NEB5X_with_p,paste0(OUTDIR,"/NEB5X_compare.tsv"),row.names = FALSE)
 
 ```
 
-# Results 1.1 QC mapping efficiency by protocol type
+# Results 1.1 QC mapping efficiency by protocol type 
+## core code
 ```{r}
 library(data.table)
 library(tidyverse)  
@@ -304,8 +311,7 @@ bulk$type<-gsub("OCUB-F control","OCUB-F reference",bulk$type)
 bulk$type <- as.character(bulk$type)
 ```
 
-# 1.1 nWGA
-
+## Result 1.1 nWGA
 ```{r}
 nWGA <- bulk[grep("nWGA",bulk$type),]
 nWGA$type<-gsub("nWGA-","",nWGA$type)
@@ -379,7 +385,7 @@ print(p_all)
 
 ```
 
-#nwga unique alignments plot
+## Result 1.1 nwga unique alignments plot
 ```{r}
 #Unique align
 nWGA <- bulk[grep("nWGA",bulk$type),]
@@ -453,7 +459,7 @@ print(p_all)
 ```
 
 
-# nwga vs wga
+## Result 1.1 nwga vs wga
 ```{r}
 # faceted version
 BS <- bulk[grep("BS", bulk$type), ]
@@ -542,7 +548,7 @@ print(p_all)
 ```
 
 
-#nwga-wga unique alignments
+## Result 1.1 nwga-wga unique alignments
 ```{r}
 BS<-bulk[grep("BS",bulk$type),]
 BS$type<-gsub("-BS","",BS$type)
@@ -669,7 +675,7 @@ ggsave(paste0(OUTDIR, "/unique_alignment_by_library_EMs_new.png"), p_all, width 
 print(p_all)
 ```
 
-# Results 1.1 WGAs
+## Results 1.1 WGAs
 ```{r}
 WGA<-bulk[grep("^WGA",bulk$type),]
 WGA$type<-gsub("WGA-","",WGA$type)
@@ -730,7 +736,7 @@ p_all <- ggplot(WGA, aes(x = type, y = mapping_efficiency, fill = type)) +
 ggsave(paste0(OUTDIR, "/mapping_efficiency_by_library_WGAs_padj.png"), p_all, width = 4, height = 3.5)
 print(p_all)
 ```
-# WGA unique alignments
+# Result 1.1 WGA unique alignments
 ```{r}
 WGA<-bulk[grep("^WGA",bulk$type),]
 WGA$type<-gsub("WGA-","",WGA$type)
@@ -795,7 +801,7 @@ ggsave(paste0(OUTDIR, "/unique_alignment_by_library_WGA_padj.png"), p_all, width
 print(p_all)
 ```
 
-#Result 1.2 WGA polymerases for WGA-bs
+# Result 1.2 WGA polymerases for WGA-bs
 ```{r}
 #WGA
 WGA<-bulk[grep("^WGA-BS",bulk$type),]
@@ -883,7 +889,7 @@ ggsave(paste0(OUTDIR, "/unique_alignment_by_pol_WGA-BS_new.png"), p_all, width =
 print(p_all)
 ```
 
-# WGA-BS density plot
+## Result 1.2 WGA-BS density plot
 ```{r}
 #unique alignment
 WGA<-bulk[grep("^WGA-BS",bulk$type),]
@@ -926,7 +932,8 @@ print(p_all)
 
 ```
 
-# Results 1.3 total CpG/GpC coverage 
+# Results 1.3 total CpG/GpC coverage
+## core code
 ```{r}
 library(data.table)
 library(tidyverse)  
@@ -1016,7 +1023,10 @@ coverage$DNA_pol <- ifelse(grepl("Q5U", coverage$sample), "Q5U",
 coverage$type<- factor(coverage$type, levels = c("nWGA-EM","nWGA-BS","WGA-EM","WGA-BS","OCUB-F reference"))
 coverage$total_cpg<-log10(coverage$total_cpg)
 coverage$total_gpc<-log10(coverage$total_gpc)
+```
 
+## Result 1.3 plots
+```{r}
 #nwga
 nwga<-coverage[grep("nWGA",coverage$type),]
 nwga$type<-gsub("nWGA-","",nwga$type)
@@ -1147,8 +1157,8 @@ print(p_all)
 
 ```
 
-#normalised
-# nWGAs
+## Result 1.3 normalised
+## nWGAs
 ```{r}
 nwga<-coverage[grep("nWGA",coverage$type),]
 nwga$type<-gsub("nWGA-","",nwga$type)
@@ -1194,7 +1204,7 @@ print(p_all)
 
 ```
 
-# nwga vs wga
+# Result 1.3 nwga vs wga
 ```{r}
 BS_coverage<-coverage[grep("BS",coverage$type),]
 BS_coverage$type<-gsub("-BS","",BS_coverage$type)
@@ -1323,7 +1333,7 @@ ggsave(paste0(OUTPUT_DIR, "/meth_coverage_by_nwgavswga_normalised_new.png"), p_a
 print(p_all)
 ```
 
-# WGA em vs bs
+## Result 1.3 WGA em vs bs
 ```{r}
 wga<-coverage[grep("^WGA",coverage$type),]
 wga$type<-gsub("WGA-","",wga$type)
@@ -1371,53 +1381,7 @@ print(p_all)
 
 ```
 
-# normalise wgas
-```{r}
-wga<-coverage[grep("^WGA",coverage$type),]
-wga$type<-gsub("WGA-","",wga$type)
-wga$type<-factor(wga$type, levels = c("EM","BS"))
-wga$total_cpg<-(wga$total_cpg)^10
-wga$total_gpc<-(wga$total_gpc)^10
-
-mapped <- read.csv(paste0(OUTPUT_DIR, "/methylation used reads.csv"), header = TRUE)
-mapped_wga<-mapped[mapped$sample %in% wga$sample,]
-mapped_wga <- mapped_wga[match(wga$sample, mapped_wga$sample), ]
-wga$normalised_cpg<- wga$total_cpg/mapped_wga$reads
-wga$normalised_gpc<- wga$total_gpc/mapped_wga$reads
-
-p_all <- ggplot(wga, aes(x = normalised_cpg, y = normalised_gpc)) +
-  geom_jitter(
-    aes(color = type),
-    position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.75),  
-    size = 1.5, alpha = 0.9
-  ) +
-  scale_color_manual(values = c("EM"="#3B0F70FF","BS"="#F1605DFF"))+
-  labs(
-      title = paste0("Normalised", "\n", "WGA methods' methylation coverage"),
-    x = "Normalised total CpG sites",
-    y = "Normalised total GpC sites",
-    color = "Method"
-    ) +
-  theme_minimal() +
-  theme(
-    legend.position = "right",
-    panel.grid.major.x = element_blank(),
-    panel.grid.minor.y = element_blank(),
-    panel.grid.minor.x = element_blank(),
-    axis.text.x = element_text(hjust = 0.5, size = 14, color = "black"),
-    axis.text.y = element_text(size = 14, color = "black"),
-    axis.title.x = element_text(size = 16, color = "black"),
-    axis.title.y = element_text(size = 16, color = "black"),
-    legend.text = element_text(size = 14, color = "black"), 
-    legend.title = element_text(size = 14, color = "black"),
-    axis.line = element_line(color = "black", linewidth = 0.8),
-    plot.title = element_text(size = 16, color= "black", hjust = 0.5)
-  )
-ggsave(paste0(OUTPUT_DIR, "/meth_coverage_wga_normalised_new.png"), p_all, width = 5, height = 3.5)
-print(p_all)
-```
-
-# WGA-BS GpC+CPG
+## Result 1.3 WGA-BS GpC+CPG
 ```{r}
 wga<-coverage[coverage$type=="WGA-BS",]
 wga$type <- droplevels(wga$type)
@@ -1468,7 +1432,7 @@ ggsave(paste0(OUTPUT_DIR, "/meth_coverage_by_type_wga-bs_new.png"), p_all, width
 print(p_all)
 ```
 # Results 2.1 global methylation 
-# nwga global methylation
+## nwga global methylation
 ```{r}
 INPUT="/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/analysis/thesis"
 OUTDIR="/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/analysis/thesis"
@@ -1532,7 +1496,7 @@ print(p_bar)
 ggsave(paste0(OUTDIR,"/scatter_plot_glob_nwga_new.png"), p_bar, width = 8, height = 5)
 ```
 
-# WGA samples
+## Result 2.1 WGA samples
 ```{r}
 INPUT="/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/analysis/thesis"
 OUTDIR="/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/analysis/thesis"
@@ -1610,7 +1574,7 @@ print(p_bar)
 ggsave(paste0(OUTDIR,"/scatter_plot_glob_wga_new.png"), p_bar, width = 8, height = 5)
 ```
 
-# wga-bs polymerases
+## Result 2.1 wga-bs polymerases
 ```{r}
 # install.packages("ggh4x") (required updating ggplot2)
 
@@ -1704,7 +1668,7 @@ ggsave(paste0(OUTDIR,"/scatter_plot_glob_wgabs_new.png"), p_bar, width = 10, hei
 ```
 
 # Results 2.2 methylation pattern around transcription start site 
-# 2.2 Universal load
+## Result 2.2 Universal load
 ```{r}
 library(GenomicRanges)
 library(ggplot2)
@@ -1738,7 +1702,7 @@ load_coverage <- function(file_path) {
 }
 ```
 
-# 2.2 data processing-WGA
+## Result 2.2 data processing-WGA
 ```{r}
 dir.input.all <- "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/bismark/SE/nondirectional/CPG_GPC"
 cov_files_cpg <- list.files(dir.input.all, pattern = "\\.CpG\\.cov$", full.names = TRUE)
@@ -1888,7 +1852,7 @@ for (s in unique(all_chrom_data$sample)){
 }
 
 ```
-# 2.2 plot by condition comparison WGA-BS
+## Result 2.2 plot by condition comparison WGA-BS
 ```{r}
 plot_bs<-plot_data[which(plot_data$method == "BS"),]
 plot_bs$wga<-gsub("-.*","",plot_bs$condition)
@@ -1925,7 +1889,7 @@ for (poly in unique_polys){
   ggsave(paste0(OUTDIR,"/tss/tss_methylation_test_new_grouping_", poly, ".png"), plot = p, width = 12, height = 6)
 }
 ```
-# Plot for em and bs overall
+## Result 2.2 Plot for em and bs overall
 ```{r}
 plot_data$cell<-ifelse( grepl("NA12878", plot_data$sample), "NA12878", "OCUB-F")
 plot_all<- plot_data %>%
@@ -1963,7 +1927,7 @@ ggsave(paste0(OUTDIR,"/tss/tss_methylation_test_new_grouping_WGAs.png"), plot = 
 
 ```
 
-# 2.2 data processing-nWGA
+## Result 2.2 data processing-nWGA
 ```{r}
 dir.input.all <- "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/sin_WGA/bismark/SE/nondirectional/CPG_GPC"
 cov_files_cpg <- list.files(dir.input.all, pattern = "\\.CpG\\.cov$", full.names = TRUE)
@@ -2113,7 +2077,7 @@ for (s in unique(all_chrom_data$sample)){
 }
 
 ```
-# 2.2 plot for nWGA
+## Result 2.2 plot for nWGA
 ```{r}
 #prepare plot dataframe 
 plot_data <- data.frame()
@@ -2172,7 +2136,7 @@ ggsave(paste0(OUTDIR,"/tss/tss_methylation_test_new_nWGA_.png"), plot = p, width
 
 ```
 
-# 2.2 OCUB-F reference
+## Result 2.2 OCUB-F reference
 ```{r}
 dir.input.all <- "/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/OCUBF_R/bismark/SE/nondirectional/CPG_GPC"
 cov_files_cpg <- list.files(dir.input.all, pattern = "\\.CpG\\.cov$", full.names = TRUE)
@@ -2321,7 +2285,7 @@ for (s in unique(all_chrom_data$sample)){
     dplyr::summarize(mean_avg_meth = mean(avg_chrom, na.rm = TRUE), .groups = 'drop')
 }
 ```
-# 2.2 plot OCUB-F reference
+## Result 2.2 plot OCUB-F reference
 ```{r}
 plot_data <- data.frame()
 for (s in names(mean_methylation)) {
@@ -2363,7 +2327,7 @@ ggsave(paste0(OUTDIR,"/tss/tss_methylation_test_new_oref_.png"), plot = p, width
 
 ```
 
-# 2.3 CpG coverage 
+# Results 2.3 CpG coverage 
 ```{r}
 library(data.table)
 library(stringr)
@@ -2474,7 +2438,7 @@ row_hc <- hclust(row_dist, method = "ward.D2")
 
 ```
 
-# Coverage plot change
+## Result 2.3 Coverage plot change
 ```{r}
 #orientation for poster (coloured labels)
 # grouping samples (after transpose)
@@ -2526,7 +2490,7 @@ draw(ht,heatmap_legend_side = "bottom", column_dend_side = "top")
 dev.off()
 ```
 
-# 2.4 copy number calling
+# Results 2.4 copy number calling
 ```{r}
 library(QDNAseq)
 library(QDNAseq.hg38)
@@ -2573,7 +2537,7 @@ copyNumbersSegmented_nw <- normalizeSegmentedBins(copyNumbersSegmented_nw)
 save(copyNumbersSegmented_nw, file = paste0(OUTDIR, "/segmented_copynumber_nWGA.RData"))
 ```
 
-# 2.4 save copy number plots
+## Result 2.4 save copy number plots
 ```{r}
 for (sample_name in sampleNames(copyNumbersSegmented_nwgaem)) {
   sample_data <- copyNumbersSegmented_nwgaem[,sample_name]
@@ -2604,11 +2568,11 @@ plot(copyNumbersSegmented_c)
 dev.off()
 ```
 
-# 2.5 copy number calling (new version with all libraries separate for easier downstream access, doesn't affect the individual sample level GC bias correction)
+## Results 2.5 copy number calling (new version with all libraries separate for easier downstream access, doesn't affect the individual sample level GC bias correction)
 ```{r}
 library(QDNAseq)
 library(QDNAseq.hg38)
-bins <- getBinAnnotations(binSize=100, genome="hg38")
+bins <- getBinAnnotations(binSize=50, genome="hg38")
 OUTDIR="/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/analysis/thesis"
 
 #wga-bs
@@ -2701,7 +2665,7 @@ save(copyNumbersSegmented_nwgaem, file = paste0(OUTDIR, "/segmented_copynumber_n
 
 ```
 
-# segmentation for cell line specific data 
+# Result 2.5 segmentation for cell line specific data 
 ```{r}
 library(QDNAseq)
 library(QDNAseq.hg38)
@@ -2897,7 +2861,7 @@ p_scatter <- ggplot(wga_comp, aes(x = noise, y = expected_sd)) +
 ggsave(paste0(OUTDIR,"/scatter_plot_copy_number_noise_axis_no_label.png"), p_scatter, width = 8, height = 5)
 
 ```
-# 2.6 copy number noise against read depth
+## Result 2.6 copy number noise against read depth
 ```{r}
 library(ggplot2)
 library(ggrepel)
@@ -3028,7 +2992,7 @@ p_scatter <- ggplot(wga_comp, aes(x = total_reads, y = noise)) +
 ggsave(paste0(OUTDIR,"/scatter_plot_copy_number_noise_vs_reads.png"), p_scatter, width = 8, height = 5)
 ```
 
-# Result 2.7 Argeement ratio (100kb)
+# Results 2.7 Argeement ratio (100kb)
 ```{r}
 library(GenomicRanges)
 library(dplyr)
@@ -3195,7 +3159,7 @@ ggsave(paste0(OUTDIR,"/copy_number_agreement_global.png"), p_bar, width = 5, hei
 
 ```
 
-# 2.8 correlation with OCUB-F reference (100kb)
+# Results 2.8 correlation with OCUB-F reference (100kb)
 ```{r}
 wga_bs <- read.table(paste0(OUTDIR, "/all-ocubf_seg.tsv"), header = TRUE, sep = "\t", stringsAsFactors = FALSE)
 wga_bs$feature<-NULL
@@ -3537,7 +3501,7 @@ p_fin <- p +
 ggsave(paste0(OUTDIR,"/genreg_gpc.png"), plot = p_fin, width = 10, height = 3)
 ```
 
-# 3.1 NA12878
+## Result 3.1 NA12878
 ```{r}
 library(ChIPseeker)
 library(TxDb.Hsapiens.UCSC.hg38.knownGene)
@@ -3654,7 +3618,7 @@ p_fin <- p +
 ggsave(paste0(OUTDIR,"/genreg_na12878_gpc.png"), plot = p_fin, width = 10, height = 3)
 ```
 
-# 3.1 comparison between cell lines
+## Result 3.1 comparison between cell lines
 ```{r}
 # Comparison between the cell lines
 stat_na_cpg<- as.data.frame(lapply(peakAnnoList_cpg, getAnnoStat))
@@ -3999,7 +3963,8 @@ mean_chrom <- combined_chrom_df %>%
   dplyr::group_by(annotation, sample, relative_position) %>%
   dplyr::summarize(mean_avg_meth = mean(avg_meth, na.rm = TRUE), .groups = "drop")
 ```
-# 3.15 plot
+
+## Result 3.2 plot
 ```{r}
 plot_data <- data.frame()
 OUTDIR="/data/scratch/DBC/UBCN/CANCDYN/jguo/all-seq/01/SLX-23666/all/analysis/thesis"
@@ -4045,7 +4010,6 @@ for (poly in unique_polys){
 }
 ```
 
-
 # Result 3.3 Differential methylation 
 ```{r}
 library(methylKit)
@@ -4085,36 +4049,7 @@ meth_bs = methylKit::unite(myobj, destrand=TRUE, min.per.group = 1L)
  #every three column is a new sample-- I haven't set additional filters as the qualities of the libraries vary and judging from the coverage PCR bias (i.e. second peak towards high coverage) is not seen
 ```
 
-# 3.3 methylation pattern inspection (to validate cell line difference)
-```{r}
-samples<-basename(c(cov_testBS_cpg,cov_ctrlBS_cpg))
-samples<-sub("_BS.*", "", samples)
-samples<-sub("_Pool_", "-", samples)
-
-clusterSamples(meth_bs, dist="correlation", method="ward.D", plot=TRUE)
-hc = clusterSamples(meth_bs, dist="correlation", method="ward.D", plot=FALSE)
-label_map <-setNames(samples, unlist(sample.id))
-hc$labels <- label_map[hc$labels]
-
-dend <- as.dendrogram(hc)
-#install.packages('dendextend')
-library(dendextend)
-dend <- set(dend, "labels_cex", 1.2)  # Adjust for readability
-# Assign two colors based on treatment
-my.cols <- c("#3B0F70FF", "#F1605DFF")  
-treatment_col <- my.cols[treatment + 1]  #  test=red, ctrl=blue
-
-dend <- set(dend, "labels_col", treatment_col)
-png_wgabs <- paste0(OUTDIR,"/methylation_profile_wgabs_dendrogram(methylkit).png")
-png(png_wgabs, width = 800, height = 600) 
-par(mar = c(10, 5, 4, 2))  
-plot(dend, main = "Methylation pattern (WGA_BS)",  ylab = "Height")
-legend("topright", legend = c("OCUB-F", "NA12878"), fill = my.cols, border = NA)
-dev.off()
-
-```
-
-# Differentially methylated regions
+## Result 3.3 Differentially methylated regions
 ```{r}
 #logistic regression based differential analysis
 myDiff=calculateDiffMeth(meth_bs)
@@ -4359,7 +4294,7 @@ p <- ggplot(presence_long, aes(x = Gene, y = GO_term, fill = presence)) +
   coord_cartesian(clip = "off")
 ggsave(paste0(OUTDIR,"/enrichgo_hypo_test.png"), p, width = 8, height = 4)
 ```
-
+## Result 3.5 hypermethylation GO
 ```{r}
 enr_hyper<-unique(dmr_sig_HYPER$geneId)
 ego_hyper<- enrichGO(gene     = enr_hyper,
@@ -4432,7 +4367,7 @@ p <- ggplot(presence_long, aes(x = Gene, y = GO_term, fill = presence)) +
 ggsave(paste0(OUTDIR,"/enrichgo_hyper_test.png"), p, width = 10, height = 4)
 ```
 
-# Hallmark enrichment
+## Result 3.5Hallmark enrichment
 ```{r}
 library(msigdbr)
 m_t2g <- msigdbr(species = "Homo sapiens", category = "H") %>% 
